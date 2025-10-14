@@ -269,6 +269,37 @@ class AllegroGraphMCPServer {
               required: ['title', 'description', 'sparqlQuery', 'repository'],
             },
           },
+          {
+            name: 'list_fti_indices',
+            description: 'List all freetext indices in a repository. Essential for knowing which indices are available for text search queries.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+              },
+            },
+          },
+          {
+            name: 'get_fti_index_config',
+            description: 'Get configuration details of a specific freetext index, including which predicates are indexed and index settings. Use this to understand what can be searched in an index.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                index: {
+                  type: 'string',
+                  description: 'Name of the freetext index',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+              },
+              required: ['index'],
+            },
+          },
         ],
       };
     });
@@ -300,6 +331,10 @@ class AllegroGraphMCPServer {
             return await this.handleSearchQueries(args);
           case 'store_query':
             return await this.handleStoreQuery(args);
+          case 'list_fti_indices':
+            return await this.handleListFtiIndices(args);
+          case 'get_fti_index_config':
+            return await this.handleGetFtiIndexConfig(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -744,6 +779,66 @@ query:${queryId} a query:StoredQuery ;
         {
           type: 'text',
           text: `Query stored successfully in query library with ID: ${queryId}\nTitle: ${title}\nRepository: ${repository}`,
+        },
+      ],
+    };
+  }
+
+  private async handleListFtiIndices(args: any) {
+    const { repository } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    const url = `${this.getRepositoryUrl(repoName)}/freetext/indices`;
+    const response = await this.axiosClients[repoName].get(url, {
+      headers: { Accept: 'application/json' },
+    });
+
+    const indices = response.data;
+    if (indices.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No freetext indices found in repository '${repoName}'`,
+          },
+        ],
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Freetext indices in '${repoName}':\n${JSON.stringify(indices, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleGetFtiIndexConfig(args: any) {
+    const { index, repository } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    const url = `${this.getRepositoryUrl(repoName)}/freetext/indices/${index}`;
+    const response = await this.axiosClients[repoName].get(url, {
+      headers: { Accept: 'application/json' },
+    });
+
+    const config = response.data;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Configuration for freetext index '${index}' in '${repoName}':\n${JSON.stringify(config, null, 2)}`,
         },
       ],
     };
