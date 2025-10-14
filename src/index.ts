@@ -318,7 +318,15 @@ class AllegroGraphMCPServer {
   private setupResourceHandlers() {
     this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
       const resources = [];
-      
+
+      // Add documentation resources
+      resources.push({
+        uri: 'allegro://docs/freetext-indexing',
+        name: 'Freetext Indexing Tutorial',
+        description: 'Tutorial on using AllegroGraph freetext indexing (FTI) for fast text search in literals. Essential for working with unstructured text.',
+        mimeType: 'text/plain',
+      });
+
       for (const repoName of Object.keys(this.config.repositories)) {
         resources.push(
           {
@@ -347,6 +355,31 @@ class AllegroGraphMCPServer {
 
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
+
+      // Handle documentation resources
+      if (uri === 'allegro://docs/freetext-indexing') {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const docPath = path.join(process.cwd(), 'freetext-index-tutorial.txt');
+
+        try {
+          const content = await fs.readFile(docPath, 'utf-8');
+          return {
+            contents: [{
+              uri,
+              mimeType: 'text/plain',
+              text: content,
+            }],
+          };
+        } catch (error) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to read documentation: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      // Handle repository resources
       const match = uri.match(/^allegro:\/\/([^\/]+)\/(info|namespaces|shacl)$/);
 
       if (!match) {

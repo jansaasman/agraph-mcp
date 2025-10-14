@@ -1,0 +1,395 @@
+This document gives a quick tutorial on how to use AllegroGraph freetext indexing in AllegroGraph. Note that the first part uses python to drive sparql queries. Just ignore the Python and only look at the SPARQL queries.
+
+The second part of this document is an abstract from our http reference guide that focuses on freetext indexing. You will find api calls to
+
+1. check what freetext indices are available
+2. which predicates are in a particular freetext index.
+
+;;;;;;;;;;;
+
+import os
+os.chdir('/mnt/c/Dropbox/training/2021AprilAccenture/')
+from crud import *
+
+conn= opendb("healthcare")
+
+;; this is what you get when you don't use freetext indexing and the database is cold
+
+res = conn.rs("""
+         select ?x ?obj {
+            ?x ?p ?obj .
+            filter(regex(str(?obj),'aspirin')) . }
+         """)
+
+68.21685934066772
+
+;; you can make it a lot faster if you know the predicate you are interested in
+;; this takes on only 0.2 seconds if warm
+
+res = conn.rs("""
+          prefix linkedct: <http://data.linkedct.org/resource/linkedct/>
+          select ?x ?obj {
+            ?x linkedct:brief_title ?obj .
+            filter(regex(?obj,'aspirin','i')) . }
+         """)
+
+0.09208106994628906
+
+;; but the right way to do it most of the time is to use freetext indexing
+;;  FTI is the franz prefix for freetext indexing.
+;;  the following looks for all triples where the object matches 'aspirin' in the entire triple store
+;; not just the brief titles.
+
+;; on a warm store takes only 0.02 seconds, so again 10 times faster.
+
+res = conn.rs("""
+              select * {
+                ?x fti:match 'aspirin' . }
+              """)
+
+0.03829765319824219
+
+;;; this will also give you the string back
+
+res = conn.rs("""
+               select ?x ?str {
+                (?x ?str) fti:match 'aspirin' . }
+              """)
+
+pprint(res[0:5])
+
+;;; this will also give you the string back and the predicate
+
+res = conn.rs("""
+               select ?x ?str ?pred{
+                (?x ?str ?pred) fti:match 'aspirin' . }
+              """)
+
+pprint(res[0:5])
+
+;;;; count how many subjects have 'cancer' somewhere in their triples
+
+conn.rs(""" select (count(*) as ?count) { ?x fti:match 'cancer'. } """)
+
+;;;; count how many subjects have 'cancer' and 'aspirin' in the same triple
+
+conn.rs(""" select (count(*) as ?count) { ?x fti:match 'cancer aspirin'. } """)
+
+;; The following is semantically different because
+;; aspirin and cancer can be in different triples for the same subject..
+
+conn.rs("""
+        select (count(*) as ?count) {
+           ?x fti:match 'aspirin' .
+           ?x fti:match 'cancer' . }
+        """)
+
+;; how many triples have aspirin OR cancer
+
+conn.rs("""select (count(*) as ?count) {?x fti:match 'aspirin | cancer | blindness' . } """)
+
+;; very often it pays off to have multiple indices, for example a text index for just
+;; one predicate so that you don't have to more work in your sparql query to ensure you
+;; got the right predicate
+
+;; the index 'all' has about 10 predicates
+;; the index 'brieftitle' only has the predicate 'brieftitle'
+
+conn.rs("""select (count(*) as ?count) {?x fti:match ('aspirin' 'all') . }""")
+
+
+conn.rs("""select (count(*) as ?count) {?x fti:match ('aspirin' 'brieftitle') . } """)
+
+;; you can use WILDCARDS
+
+conn.rs("""select distinct ?str { (?x ?str) fti:match ('aspir*' 'brieftitle') . } """)
+
+;; let's filter out the ones that start with aspir* but don't have aspirin
+
+pprint(
+ conn.rs("""
+select ?str {
+  (?x ?str) fti:match ('aspir*' 'brieftitle') . 
+  filter not exists { ?x fti:match ('aspirin' 'brieftitle')} . }
+ """))
+
+;; you can use wild cards at the beginning of a word but it is not 
+;; recommended :-)
+
+
+conn.rs("""
+select ?str {
+  (?x ?str) fti:match ('*spirin' 'brieftitle') .
+  filter not exists { ?x fti:match ('aspirin' 'brieftitle')} . }
+ """)
+
+;; you can use ? for a single character.
+
+conn.rs("""
+select ?str {
+  (?x ?str) fti:match ('asp?r*' 'brieftitle') . 
+  filter not exists { ?x fti:match ('aspirin' 'brieftitle')} . }
+ """)
+
+;; how to combine freetext hits for the same subject?
+
+Say you have these triples
+
+<s> <hasMedicin> "here is aspirin"
+<s> <hasDisease> "and here is cancer"
+
+this would fail...
+
+(rs "
+select (count(distinct ?x) as ?count) {
+   ?x fti:match 'aspirin cancer' . }")
+
+;; this will succeed
+
+(rs "
+select (count(distinct ?x) as ?count) {
+  ?x fti:match 'aspirin' .
+  ?x fti:match 'cancer' . }
+ ")
+
+
+;; matchExpression
+
+conn.rs("""
+select * {
+  (?x ?v) fti:matchExpression '(phrase \"no aspirin\")' .
+  } """)
+
+conn.rs("""
+select * {
+  ?x fti:matchExpression '(match \"aspir*\")' .
+  } """)
+
+conn.rs("""
+select * {
+  (?x ?str) fti:matchExpression '(or (match \"aspir*\") (phrase \"no aspirin\"))' .
+  } """)
+
+
+;;;;;;;;;;;;;;;;;
+
+
+@(get-post-freetext)
+
+### GET/POST /repositories/[name]/freetext 
+
+Perform a query on the free-text indices of the store, if any. A list
+of matching triples is returned.
+
+`pattern`
+: The text to search for. Either this or `expression` should be
+  passed. Putting multiple words in this argument means 'match only
+  triples with all these words'. Double-quoting a part of the string
+  means 'only triples where this exact string occurs'. Non-quoted
+  words may contain wildcards - `*` (matches any string) and `?`
+  (matches any single character). Or they can end in `~` to do a fuzzy
+  search, optionally followed by a decimal number indicating the
+  maximum [Levenshtein distance][lev] to match. A vertical bar (`|`)
+  can be used between patterns to mean 'documents matching one of
+  these patterns', and parentheses can be used to group sub-patterns.
+  For example: `"common lisp" (programming | develop*)`.
+
+`expression`
+: An S-expression combining search strings using `and`, `or`,
+  `phrase`, `match`, and `fuzzy`. For example `(and (phrase "common
+  lisp") (or "programming" (match "develop*")))`.
+
+`index`
+: An optional parameter that restricts the search to a specific
+  free-text index. If not given, all available indices are used.
+
+`sorted`
+: A boolean indicating whether the results should be sorted by
+  relevance. Default is false.
+
+`limit`
+: An integer limiting the amount of results that can be returned.
+
+`offset`
+: An integer telling the server to skip the first few results.
+
+    GET /repositories/repo1/freetext?pattern=RDF HTTP/1.1
+    Accept: text/plain
+
+    HTTP/1.1 200 OK
+    Content-Type: text/plain; charset=UTF-8
+    
+    <http://example.com/node1> <http://example.com/name> "AGraph RDF store".
+    .... others ....
+
+[lev]: http://en.wikipedia.org/wiki/Levenshtein_distance
+
+@(get-freetext-indices)
+
+### GET /repositories/[name]/freetext/indices 
+
+Returns a list of names of free-text indices defined in this
+repository.
+
+@(get-freetext-index)
+
+### GET /repositories/[name]/freetext/indices/[index] 
+
+Only returns `application/json` responses. Returns the configuration
+parameters of the named free-text index. This will be an object with
+the following fields:
+
+`predicates`
+: An array of strings. Empty if the index indexes all predicates,
+  containing only the predicates that are indices otherwise.
+
+`indexLiterals`
+: Can be `true` (index all literals), `false` (no literals), or an array of
+  literal types to index.
+
+`indexResources`
+: Can be `true` (index resources fully), `false` (don't index
+  resources), or the string `"short"` to index only the part after the
+  last `#` or `/` in the resource.
+
+`indexFields`
+: An array containing any of the strings `"subject"`, `"predicate"`,
+  `"object"`, and `"graph"`. This indicates which fields of a triple
+  are indexed.
+
+`minimumWordSize`
+: An integer, indicating the minimum size a word must have to be
+  indexed.
+
+`stopWords`
+: A list of words, indicating the words that count as stop-words, and
+  should not be indexed.
+
+`wordFilters`
+: A list of word filters configured for this index (see
+  [below](#put-freetext-index)).
+
+`innerChars`
+: A list of character specifiers configured for this index (see [below](#put-freetext-index)).
+
+`borderChars`
+: A list of character specifiers configured for this index.
+
+`tokenizer`
+: The name of the tokenizer being used (currently either `default` or
+  `japanese`).
+  
+@(get-freetext-param)
+
+### GET /repositories/[name]/freetext/indices/[index]/[param] 
+
+If `[param]` is one of the slot values mentioned
+[above](#get-freetext-index), the corresponding configuration
+parameter of the index is returned.
+
+@(put-freetext-index)
+
+### PUT /repositories/[name]/freetext/indices/[index] 
+
+Create a new free-text index. Takes the following parameters:
+
+`predicate`
+: Can be specified multiple times. Indicates the predicates that
+  should be indexed. When not given, all predicates are indexed.
+
+`indexLiterals`
+: A boolean (defaults to true) that determines whether literal are
+  indexed.
+
+`indexLiteralType`
+: When `indexLiterals` is true, this parameter can be given any number
+  of times to restrict the types of literals that are indexed. When
+  not given, all literals (also untyped ones) are indexed.
+
+`indexResources`
+: Can be given the values `true`, `false`, or `short`. Default is
+  `false`. `short` means to index only the part of the resource after
+  the last `#` or `/` character.
+
+`indexField`
+: May be specified multiple times, must be one of `subject`, `object`,
+  `predicate`, or `graph`. Determines which fields of a triple to
+  index. Defaults to just `object`.
+
+`minimumWordSize`
+: An integer. Determines the minimum size a word must have to be
+  indexed.
+
+`stopWord`
+: Can be passed multiple times. Determines the set of stop-words,
+  words that are not indexed. Defaults to a small set of common
+  English words. To override this default and specify that no
+  stop-words should be used, pass this parameter once, with an empty
+  value.
+
+`wordFilter`
+: Specify a word filter, which is an operation applied to words before
+  they are indexed and before they are searched for. Used to
+  'normalize' words. Can be passed multiple times to specify multiple
+  filters. Currently the only valid values are `stem.english` (a
+  simple English-language stemmer), `drop-accents` (will turn 'é'
+  into 'e', etc.), and `soundex`, for the [Soundex][sndx] algorithm.
+
+`innerChars`
+: Can be passed multiple times. The character set to be used as the
+  constituent characters of a word. Each parameter is part of a character set,
+  and can be one of the following:
+    * The word `alpha` - all (unicode) alphabetic characters
+    * `digit` - all base-10 digits
+    * `alphanumeric` - all digits and alphabetic characters
+    * a single character
+    * a range of characters: a single character, followed by a dash (`-`)
+      character, followed by another single character.
+
+`borderChars`
+: Can be passed multiple times. The character set to be used as the
+  border characters of indexed words. Uses the same syntax as `innerChars`.
+
+`tokenizer`
+: An optional string. Can be either `default` or `japanese`. When
+  `japanese` is passed, the tokenizer is based on morphological
+  analysis, and the `innerChars` and `borderChars` parameters are
+  ignored. For `japanese`, it is also recommended to set
+  `minimumWordSize` to either 1 or 2.
+
+
+[sndx]: http://en.wikipedia.org/wiki/Soundex
+
+@(post-freetext-index)
+
+### POST /repositories/[name]/freetext/indices/[index] 
+
+This can be use to reconfigure a free-text index. It takes the all the
+parameters that the [PUT](#put-freetext-index) service takes.
+Parameters not specified are left at their old values. To indicate
+that the `predicate`, `indexLiteralType`, `indexField`, `stopWord`, or
+`wordFilter` parameters should be set to the empty set instead of left
+at their default, pass these parameters once, with the empty string as
+value.
+
+The parameter `reIndex`, a boolean which defaults to true, the client
+can control whether a full re-indexing of the modified index should
+take place, or whether the new settings should be used when indexing
+triples added after the redefinition.
+
+@(delete-freetext-index)
+
+### DELETE /repositories/[name]/freetext/indices/[index] 
+
+Delete the named index from the repository.
+
+@(post-blanknodes)
+
+### POST /repositories/[name]/blankNodes 
+
+Ask the server to allocate and return a set of blank nodes. Takes one
+argument, `amount`, which should be an integer.
+
+These nodes can, in principle, be used to refer to nodes when using
+other services. Note, however, that a lot of the standards related to
+
