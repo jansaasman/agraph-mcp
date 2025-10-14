@@ -395,7 +395,15 @@ class AllegroGraphMCPServer {
       if (uri === 'allegro://docs/freetext-indexing') {
         const fs = await import('fs/promises');
         const path = await import('path');
-        const docPath = path.join(process.cwd(), 'freetext-index-tutorial.txt');
+        const { fileURLToPath } = await import('url');
+
+        // Get the directory where the compiled JS file is located
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+
+        // Go up one level from dist/ to the project root
+        const projectRoot = path.dirname(__dirname);
+        const docPath = path.join(projectRoot, 'freetext-index-tutorial.txt');
 
         try {
           const content = await fs.readFile(docPath, 'utf-8');
@@ -409,7 +417,7 @@ class AllegroGraphMCPServer {
         } catch (error) {
           throw new McpError(
             ErrorCode.InternalError,
-            `Failed to read documentation: ${error instanceof Error ? error.message : String(error)}`
+            `Failed to read documentation from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
           );
         }
       }
