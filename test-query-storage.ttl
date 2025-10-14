@@ -1,0 +1,20 @@
+@prefix query: <http://franz.com/ns/query-library#> .
+@prefix dc: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Example stored query
+query:query-001 a query:StoredQuery ;
+    dc:title "Get all Person names and ages from Olympics" ;
+    dc:description "Retrieves all people in the Olympics dataset with their names and ages" ;
+    query:sparqlText """
+        PREFIX foaf: <http://xmlns.com/foaf/0.1/>
+        SELECT ?name ?age WHERE {
+            ?person a foaf:Person ;
+                    foaf:name ?name ;
+                    foaf:age ?age .
+        }
+        LIMIT 10
+    """ ;
+    query:repository "olympics" ;
+    dc:created "2025-10-14T10:30:00Z"^^xsd:dateTime ;
+    query:successful true .

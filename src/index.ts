@@ -225,6 +225,50 @@ class AllegroGraphMCPServer {
               },
             },
           },
+          {
+            name: 'search_queries',
+            description: 'Search the query library for previously successful queries by natural language description. Use this BEFORE writing complex queries to see if a similar query pattern already exists.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                search: {
+                  type: 'string',
+                  description: 'Natural language description of what you want to query',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Filter by repository name (optional)',
+                },
+              },
+              required: ['search'],
+            },
+          },
+          {
+            name: 'store_query',
+            description: 'Store a successful SPARQL query in the query library with its natural language description. Always ASK the user for confirmation before storing.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                title: {
+                  type: 'string',
+                  description: 'Short title for the query',
+                },
+                description: {
+                  type: 'string',
+                  description: 'Natural language description of what the query does',
+                },
+                sparqlQuery: {
+                  type: 'string',
+                  description: 'The SPARQL query text',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository the query was run against',
+                },
+              },
+              required: ['title', 'description', 'sparqlQuery', 'repository'],
+            },
+          },
         ],
       };
     });
@@ -252,6 +296,10 @@ class AllegroGraphMCPServer {
             return await this.handleAddTriples(args);
           case 'get_shacl':
             return await this.handleGetShacl(args);
+          case 'search_queries':
+            return await this.handleSearchQueries(args);
+          case 'store_query':
+            return await this.handleStoreQuery(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -554,6 +602,115 @@ class AllegroGraphMCPServer {
         {
           type: 'text',
           text: `SHACL shapes from '${repoName}':\n${JSON.stringify(response.data, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleSearchQueries(args: any) {
+    const { search, repository } = args;
+
+    // Build SPARQL query to search the query library
+    let sparqlQuery = `
+      PREFIX query: <http://franz.com/ns/query-library#>
+      PREFIX dc: <http://purl.org/dc/terms/>
+      SELECT ?title ?description ?sparql ?repo ?created WHERE {
+        ?q a query:StoredQuery ;
+           dc:title ?title ;
+           dc:description ?description ;
+           query:sparqlText ?sparql ;
+           query:repository ?repo .
+        OPTIONAL { ?q dc:created ?created }
+        FILTER(
+          CONTAINS(LCASE(?title), LCASE("${search}")) ||
+          CONTAINS(LCASE(?description), LCASE("${search}"))
+        )
+    `;
+
+    if (repository) {
+      sparqlQuery += `\n        FILTER(?repo = "${repository}")`;
+    }
+
+    sparqlQuery += `\n      }\n      ORDER BY DESC(?created)\n      LIMIT 10`;
+
+    // Query the query-library repository
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
+    }
+
+    const url = this.getRepositoryUrl('query-library');
+    const response = await this.axiosClients['query-library'].get(url, {
+      params: { query: sparqlQuery },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = response.data.results.bindings;
+    if (results.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No queries found matching "${search}"`,
+          },
+        ],
+      };
+    }
+
+    const formattedResults = results.map((r: any) => ({
+      title: r.title.value,
+      description: r.description.value,
+      repository: r.repo.value,
+      sparql: r.sparql.value,
+      created: r.created?.value
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Found ${results.length} matching queries:\n${JSON.stringify(formattedResults, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleStoreQuery(args: any) {
+    const { title, description, sparqlQuery, repository } = args;
+
+    // Generate a unique ID for the query
+    const queryId = `query-${Date.now()}`;
+
+    // Create turtle format data
+    const turtle = `@prefix query: <http://franz.com/ns/query-library#> .
+@prefix dc: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+query:${queryId} a query:StoredQuery ;
+    dc:title """${title.replace(/"/g, '\\"')}""" ;
+    dc:description """${description.replace(/"/g, '\\"')}""" ;
+    query:sparqlText """${sparqlQuery.replace(/"/g, '\\"')}""" ;
+    query:repository "${repository}" ;
+    dc:created "${new Date().toISOString()}"^^xsd:dateTime ;
+    query:successful true .
+`;
+
+    // Store in query-library repository
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
+    }
+
+    const url = `${this.getRepositoryUrl('query-library')}/statements`;
+    const response = await this.axiosClients['query-library'].post(url, turtle, {
+      headers: { 'Content-Type': 'text/turtle' },
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Query stored successfully in query library with ID: ${queryId}\nTitle: ${title}\nRepository: ${repository}`,
         },
       ],
     };
