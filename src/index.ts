@@ -300,6 +300,14 @@ class AllegroGraphMCPServer {
               required: ['index'],
             },
           },
+          {
+            name: 'read_fti_tutorial',
+            description: 'IMPORTANT: Read this FIRST when working with freetext indexing or text search. Returns the complete freetext indexing tutorial with SPARQL examples, syntax patterns, wildcards, performance tips, and REST API documentation. Essential for understanding how to use fti:match and fti:matchExpression correctly.',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
         ],
       };
     });
@@ -335,6 +343,8 @@ class AllegroGraphMCPServer {
             return await this.handleListFtiIndices(args);
           case 'get_fti_index_config':
             return await this.handleGetFtiIndexConfig(args);
+          case 'read_fti_tutorial':
+            return await this.handleReadFtiTutorial();
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -852,11 +862,42 @@ query:${queryId} a query:StoredQuery ;
     };
   }
 
+  private async handleReadFtiTutorial() {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+
+    // Get the directory where the compiled JS file is located
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    // Go up one level from dist/ to the project root
+    const projectRoot = path.dirname(__dirname);
+    const docPath = path.join(projectRoot, 'freetext-index-tutorial.txt');
+
+    try {
+      const content = await fs.readFile(docPath, 'utf-8');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: content,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to read freetext indexing tutorial from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
   private async getRepositoryInfo(repoName: string) {
     const config = this.config.repositories[repoName];
     const url = `${this.getRepositoryUrl(repoName)}/size`;
     const response = await this.axiosClients[repoName].get(url);
-    
+
     return {
       repository: repoName,
       catalog: config.catalog,
