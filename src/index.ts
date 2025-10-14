@@ -212,6 +212,19 @@ class AllegroGraphMCPServer {
               required: ['triples'],
             },
           },
+          {
+            name: 'get_shacl',
+            description: 'Extract SHACL shapes from repository data. Returns SHACL shapes in JSON-LD format that describe the types and predicates in the repository.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+              },
+            },
+          },
         ],
       };
     });
@@ -237,6 +250,8 @@ class AllegroGraphMCPServer {
             return await this.handleSparqlUpdate(args);
           case 'add_triples':
             return await this.handleAddTriples(args);
+          case 'get_shacl':
+            return await this.handleGetShacl(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -479,9 +494,9 @@ class AllegroGraphMCPServer {
   private async handleAddTriples(args: any) {
     const { triples, repository, format = 'turtle', context } = args;
     const repoName = repository || this.currentRepository;
-    
+
     const url = `${this.getRepositoryUrl(repoName)}/statements`;
-    
+
     let contentType = 'text/turtle';
     if (format === 'ntriples') contentType = 'text/plain';
     else if (format === 'rdfxml') contentType = 'application/rdf+xml';
@@ -500,6 +515,30 @@ class AllegroGraphMCPServer {
         {
           type: 'text',
           text: `Triples added successfully to '${repoName}'. Status: ${response.status}`,
+        },
+      ],
+    };
+  }
+
+  private async handleGetShacl(args: any) {
+    const { repository } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
+
+    const response = await this.axiosClients[repoName].get(url, {
+      headers: { 'Accept': 'application/json' },
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `SHACL shapes from '${repoName}':\n${JSON.stringify(response.data, null, 2)}`,
         },
       ],
     };
