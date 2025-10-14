@@ -598,30 +598,71 @@ class AllegroGraphMCPServer {
   }
 }
 
-// Configuration for multiple repositories
-const config: MultiRepositoryConfig = {
-  defaultRepository: process.env.DEFAULT_REPOSITORY || 'olympics',
-  repositories: {
-    olympics: {
-      host: process.env.OLYMPICS_HOST || 'flux.franz.com',
-      port: parseInt(process.env.OLYMPICS_PORT || '10000'),
-      username: process.env.OLYMPICS_USERNAME || 'demos',
-      password: process.env.OLYMPICS_PASSWORD || 'demos',
-      catalog: process.env.OLYMPICS_CATALOG || 'demos',
-      repository: process.env.OLYMPICS_REPOSITORY || 'olympics',
-      protocol: (process.env.OLYMPICS_PROTOCOL as 'http' | 'https') || 'https',
-    },
-    actors: {
-      host: process.env.ACTORS_HOST || 'flux.franz.com',
-      port: parseInt(process.env.ACTORS_PORT || '10000'),
-      username: process.env.ACTORS_USERNAME || 'demos',
-      password: process.env.ACTORS_PASSWORD || 'demos',
-      catalog: process.env.ACTORS_CATALOG || 'demos',
-      repository: process.env.ACTORS_REPOSITORY || 'actors',
-      protocol: (process.env.ACTORS_PROTOCOL as 'http' | 'https') || 'https',
-    },
-  },
-};
+// Dynamic repository discovery
+async function discoverRepositories(): Promise<MultiRepositoryConfig> {
+  const host = process.env.AGRAPH_HOST || 'flux.franz.com';
+  const port = parseInt(process.env.AGRAPH_PORT || '10000');
+  const username = process.env.AGRAPH_USERNAME || 'demos';
+  const password = process.env.AGRAPH_PASSWORD || 'demos';
+  const catalog = process.env.AGRAPH_CATALOG || 'demos';
+  const protocol = (process.env.AGRAPH_PROTOCOL as 'http' | 'https') || 'https';
 
-const server = new AllegroGraphMCPServer(config);
-server.run().catch(console.error);
+  const baseUrl = `${protocol}://${host}:${port}`;
+  const url = catalog === 'root'
+    ? `${baseUrl}/repositories`
+    : `${baseUrl}/catalogs/${catalog}/repositories`;
+
+  try {
+    const response = await axios.get(url, {
+      auth: { username, password },
+      headers: { Accept: 'application/json' }
+    });
+
+    const repositories: { [key: string]: RepositoryConfig } = {};
+    let defaultRepo = process.env.DEFAULT_REPOSITORY;
+
+    // Parse repository list
+    const repoList = response.data;
+    for (const repo of repoList) {
+      const repoId = repo.id.replace(/"/g, ''); // Remove quotes from ID
+      repositories[repoId] = {
+        host,
+        port,
+        username,
+        password,
+        catalog,
+        repository: repoId,
+        protocol
+      };
+    }
+
+    // Set default repository
+    if (!defaultRepo && repoList.length > 0) {
+      defaultRepo = repoList[0].id.replace(/"/g, '');
+    }
+
+    console.error(`Discovered ${Object.keys(repositories).length} repositories in catalog '${catalog}'`);
+
+    return {
+      defaultRepository: defaultRepo || 'olympics',
+      repositories
+    };
+  } catch (error) {
+    console.error(`Failed to discover repositories: ${error instanceof Error ? error.message : String(error)}`);
+    console.error('Falling back to default configuration');
+
+    // Fallback to default configuration
+    return {
+      defaultRepository: 'olympics',
+      repositories: {
+        olympics: { host, port, username, password, catalog, repository: 'olympics', protocol }
+      }
+    };
+  }
+}
+
+// Initialize and run server
+discoverRepositories().then(config => {
+  const server = new AllegroGraphMCPServer(config);
+  server.run().catch(console.error);
+}).catch(console.error);

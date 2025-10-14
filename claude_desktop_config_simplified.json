@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "allegro-graph": {
+      "command": "node",
+      "args": ["C:\\Users\\jansa\\agraph-mcp\\dist\\index.js"],
+      "env": {
+        "AGRAPH_HOST": "flux.franz.com",
+        "AGRAPH_PORT": "10000",
+        "AGRAPH_USERNAME": "demos",
+        "AGRAPH_PASSWORD": "demos",
+        "AGRAPH_CATALOG": "demos",
+        "AGRAPH_PROTOCOL": "https"
+      }
+    }
+  }
+}
