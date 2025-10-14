@@ -214,7 +214,7 @@ class AllegroGraphMCPServer {
           },
           {
             name: 'get_shacl',
-            description: 'Extract SHACL shapes from repository data. Returns SHACL shapes in JSON-LD format that describe the types and predicates in the repository.',
+            description: 'IMPORTANT: Call this FIRST before writing SPARQL queries. Returns SHACL shapes that describe all available classes, predicates, and their constraints in the repository. This eliminates guessing and prevents errors by providing the exact schema.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -274,6 +274,12 @@ class AllegroGraphMCPServer {
       for (const repoName of Object.keys(this.config.repositories)) {
         resources.push(
           {
+            uri: `allegro://${repoName}/shacl`,
+            name: `${repoName} SHACL Schema`,
+            description: `SHACL shapes defining all classes, predicates, and constraints in ${repoName}. READ THIS FIRST before writing SPARQL queries to understand the data structure.`,
+            mimeType: 'application/json',
+          },
+          {
             uri: `allegro://${repoName}/info`,
             name: `${repoName} Repository Information`,
             description: `Basic information about the ${repoName} repository`,
@@ -293,14 +299,14 @@ class AllegroGraphMCPServer {
 
     this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
       const uri = request.params.uri;
-      const match = uri.match(/^allegro:\/\/([^\/]+)\/(info|namespaces)$/);
-      
+      const match = uri.match(/^allegro:\/\/([^\/]+)\/(info|namespaces|shacl)$/);
+
       if (!match) {
         throw new McpError(ErrorCode.InvalidRequest, `Invalid resource URI: ${uri}`);
       }
 
       const [, repoName, resourceType] = match;
-      
+
       if (!this.config.repositories[repoName]) {
         throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
       }
@@ -322,6 +328,15 @@ class AllegroGraphMCPServer {
               uri,
               mimeType: 'application/json',
               text: JSON.stringify(namespaces, null, 2),
+            }],
+          };
+        } else if (resourceType === 'shacl') {
+          const shacl = await this.getShacl(repoName);
+          return {
+            contents: [{
+              uri,
+              mimeType: 'application/json',
+              text: JSON.stringify(shacl, null, 2),
             }],
           };
         } else {
@@ -563,7 +578,16 @@ class AllegroGraphMCPServer {
     const response = await this.axiosClients[repoName].get(url, {
       headers: { Accept: 'application/sparql-results+json' },
     });
-    
+
+    return response.data;
+  }
+
+  private async getShacl(repoName: string) {
+    const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
+    const response = await this.axiosClients[repoName].get(url, {
+      headers: { Accept: 'application/json' },
+    });
+
     return response.data;
   }
 
