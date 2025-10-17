@@ -227,7 +227,7 @@ class AllegroGraphMCPServer {
           },
           {
             name: 'search_queries',
-            description: 'Search the query library for previously successful queries by natural language description. Use this BEFORE writing complex queries to see if a similar query pattern already exists.',
+            description: 'Search the query library for previously successful queries by natural language description. Use this BEFORE writing complex queries to see if a similar query pattern already exists. If no matches found or results are not helpful, use list_all_queries to see ALL patterns.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -270,6 +270,20 @@ class AllegroGraphMCPServer {
             },
           },
           {
+            name: 'list_all_queries',
+            description: 'CRITICAL: Use this tool IMMEDIATELY when: (1) A SPARQL query fails or returns unexpected results, (2) You are unsure about URI meanings or predicate usage, (3) Working with cryptic Wikidata properties (e.g., wdt:P19), or (4) Before writing complex queries. Returns ALL successful queries with their natural language descriptions for the specified repository. This shows you working patterns where rdfs:label/skos:label reveal URI meanings, proper predicate usage, and proven query structures. Essential for learning vocabulary through examples rather than guessing.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                repository: {
+                  type: 'string',
+                  description: 'Repository name to get queries for (required)',
+                },
+              },
+              required: ['repository'],
+            },
+          },
+          {
             name: 'list_fti_indices',
             description: 'List all freetext indices in a repository. Essential for knowing which indices are available for text search queries.',
             inputSchema: {
@@ -308,6 +322,106 @@ class AllegroGraphMCPServer {
               properties: {},
             },
           },
+          {
+            name: 'vector_nearest_neighbor',
+            description: 'Execute a nearest neighbor search using AllegroGraph vector embeddings. Returns embeddings similar to the input text based on cosine similarity. Use this for semantic search and retrieval. For RAG (combining search with LLM response), use vector_ask_documents instead.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                text: {
+                  type: 'string',
+                  description: 'The text to search for similar embeddings',
+                },
+                vectorStore: {
+                  type: 'string',
+                  description: 'Name of the vector store to search (can be same as repository or different)',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+                topN: {
+                  type: 'number',
+                  description: 'Maximum number of results to return (default: 10)',
+                  default: 10,
+                },
+                minScore: {
+                  type: 'number',
+                  description: 'Minimum cosine similarity score threshold (0.0-1.0, default: 0.0)',
+                  default: 0.0,
+                },
+                selector: {
+                  type: 'string',
+                  description: 'Optional SPARQL selector to pre-filter embeddings. Must start with "?id vdbprop:id ?link". Enables GraphRAG by restricting search to specific subgraphs.',
+                },
+                useClustering: {
+                  type: 'boolean',
+                  description: 'Use clustering approximation for faster search on large vector stores (default: false)',
+                  default: false,
+                },
+                linkToSource: {
+                  type: 'boolean',
+                  description: 'Include source triple information via vdbprop:id link (default: false)',
+                  default: false,
+                },
+              },
+              required: ['text', 'vectorStore'],
+            },
+          },
+          {
+            name: 'vector_ask_documents',
+            description: 'Execute RAG (Retrieval Augmented Generation) using AllegroGraph vector embeddings. First finds nearest neighbors, then sends them with your question to an LLM for a response. Returns the LLM response along with citations. Use this for question-answering over your document embeddings.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                question: {
+                  type: 'string',
+                  description: 'The question to ask about your documents',
+                },
+                vectorStore: {
+                  type: 'string',
+                  description: 'Name of the vector store to search',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+                topN: {
+                  type: 'number',
+                  description: 'Number of document chunks to retrieve for context (default: 5)',
+                  default: 5,
+                },
+                minScore: {
+                  type: 'number',
+                  description: 'Minimum similarity score threshold (0.0-1.0, default: 0.8)',
+                  default: 0.8,
+                },
+                selector: {
+                  type: 'string',
+                  description: 'Optional SPARQL selector to pre-filter which documents to search. Must start with "?id vdbprop:id ?link". Enables GraphRAG.',
+                },
+                useClustering: {
+                  type: 'boolean',
+                  description: 'Use clustering approximation for faster search (default: false)',
+                  default: false,
+                },
+              },
+              required: ['question', 'vectorStore'],
+            },
+          },
+          {
+            name: 'check_vector_store',
+            description: 'Check if a repository is configured as a vector store. Returns true if embeddings have been created, false otherwise.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                repository: {
+                  type: 'string',
+                  description: 'Repository name to check (optional, uses current if not specified)',
+                },
+              },
+            },
+          },
         ],
       };
     });
@@ -339,12 +453,20 @@ class AllegroGraphMCPServer {
             return await this.handleSearchQueries(args);
           case 'store_query':
             return await this.handleStoreQuery(args);
+          case 'list_all_queries':
+            return await this.handleListAllQueries(args);
           case 'list_fti_indices':
             return await this.handleListFtiIndices(args);
           case 'get_fti_index_config':
             return await this.handleGetFtiIndexConfig(args);
           case 'read_fti_tutorial':
             return await this.handleReadFtiTutorial();
+          case 'vector_nearest_neighbor':
+            return await this.handleVectorNearestNeighbor(args);
+          case 'vector_ask_documents':
+            return await this.handleVectorAskDocuments(args);
+          case 'check_vector_store':
+            return await this.handleCheckVectorStore(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -366,9 +488,23 @@ class AllegroGraphMCPServer {
 
       // Add documentation resources
       resources.push({
+        uri: 'allegro://docs/query-workflow',
+        name: 'SPARQL Query Workflow Best Practices',
+        description: 'CRITICAL: Read this to understand the recommended workflow for writing SPARQL queries. Covers schema discovery, query library usage, freetext indexing, and when to use each tool.',
+        mimeType: 'text/markdown',
+      });
+
+      resources.push({
         uri: 'allegro://docs/freetext-indexing',
         name: 'Freetext Indexing Tutorial',
         description: 'Tutorial on using AllegroGraph freetext indexing (FTI) for fast text search in literals. Essential for working with unstructured text.',
+        mimeType: 'text/plain',
+      });
+
+      resources.push({
+        uri: 'allegro://docs/vector-store',
+        name: 'Vector Store and RAG Tutorial',
+        description: 'IMPORTANT: Read this when working with vector embeddings, nearest neighbor search, or RAG (Retrieval Augmented Generation). Covers llm:nearestNeighbor and llm:askMyDocuments magic predicates with examples.',
         mimeType: 'text/plain',
       });
 
@@ -402,6 +538,235 @@ class AllegroGraphMCPServer {
       const uri = request.params.uri;
 
       // Handle documentation resources
+      if (uri === 'allegro://docs/query-workflow') {
+        const workflowDoc = `# SPARQL Query Workflow Best Practices
+
+## Overview
+This guide describes the recommended workflow for writing SPARQL queries against AllegroGraph repositories using this MCP server.
+
+---
+
+## 1. Understanding the Schema (ALWAYS START HERE)
+
+Before writing any query, understand what data is available:
+
+### Step 1.1: Read the SHACL Schema
+- **Tool**: Read the resource \`allegro://<repository-name>/shacl\`
+- **Purpose**: Discover all classes, predicates, datatypes, and constraints
+- **Why**: Prevents guessing about URIs and predicates
+
+### Step 1.2: Check Namespace Prefixes
+- **Tool**: Read the resource \`allegro://<repository-name>/namespaces\`
+- **Purpose**: Learn what namespace prefixes are defined
+- **Why**: Makes queries more readable and correct
+
+---
+
+## 2. Writing Standard SPARQL Queries
+
+### Step 2.1: Search the Query Library FIRST
+- **Tool**: \`search_queries\`
+- **When**: Before writing any new query
+- **Why**: Someone may have already solved a similar problem
+- **Input**: Natural language description of what you want to query
+- **Example**: "find all athletes born in France"
+
+### Step 2.2: If Search Returns No Results → List ALL Queries
+- **Tool**: \`list_all_queries\` (CRITICAL)
+- **When**:
+  - \`search_queries\` found nothing helpful
+  - You're unsure about URI meanings or predicate usage
+  - Working with cryptic Wikidata properties (e.g., wdt:P19)
+  - A query failed or returned unexpected results
+- **Why**:
+  - See ALL successful patterns for the repository
+  - Discover URI meanings through rdfs:label/skos:label in working queries
+  - Learn predicate usage by example
+  - Understand vocabulary through proven patterns
+- **Input**: Repository name (required)
+- **Note**: Returns ALL queries (possibly 500+) - this is intentional!
+
+### Step 2.3: Write and Execute Your Query
+- **Tool**: \`sparql_query\`
+- **Input**: Your SPARQL query text
+- **Options**: Set format (json, xml, csv, tsv) and limit
+
+### Step 2.4: If Query Fails → IMMEDIATELY Use list_all_queries
+- **Don't guess or iterate blindly**
+- Look at working examples to understand patterns
+- Check how others used similar predicates or URIs
+
+---
+
+## 3. Writing Freetext Search Queries
+
+For queries involving text search (e.g., "find documents containing 'olympic'"):
+
+### Step 3.1: Read the Freetext Indexing Tutorial
+- **Tool**: \`read_fti_tutorial\`
+- **When**: FIRST time working with text search, or when syntax is unclear
+- **Why**: Learn fti:match, fti:matchExpression, wildcards, performance tips
+
+### Step 3.2: List Available Indices
+- **Tool**: \`list_fti_indices\`
+- **Input**: Repository name
+- **Why**: Know which freetext indices exist
+
+### Step 3.3: Get Index Configuration
+- **Tool**: \`get_fti_index_config\`
+- **Input**: Index name
+- **Why**: Understand which predicates are indexed and what can be searched
+
+### Step 3.4: Check Query Library for FTI Examples
+- **Tool**: \`search_queries\` or \`list_all_queries\`
+- **Search for**: "fti:match" or "text search" or "freetext"
+- **Why**: See working examples of fti:match usage
+
+### Step 3.5: Write Your FTI Query
+- **Tool**: \`sparql_query\`
+- **Include**: fti:match or fti:matchExpression in your query
+- **Example pattern**: \`?subject ?predicate ?literal . ?literal fti:match "search term*" .\`
+
+---
+
+## 4. Working with Vector Embeddings and RAG
+
+For semantic search and RAG (Retrieval Augmented Generation):
+
+### Step 4.1: Check if Repository is a Vector Store
+- **Tool**: \`check_vector_store\`
+- **Input**: Repository name (optional)
+- **Why**: Verify that embeddings have been created
+
+### Step 4.2: Read the Vector Store Tutorial (First Time)
+- **Tool**: Read resource \`allegro://docs/vector-store\`
+- **When**: FIRST time using vector embeddings or RAG
+- **Why**: Learn llm:nearestNeighbor and llm:askMyDocuments syntax, selectors, GraphRAG patterns
+
+### Step 4.3: Choose Your Approach
+
+#### For Semantic Search Only (Nearest Neighbor):
+- **Tool**: \`vector_nearest_neighbor\`
+- **Input**:
+  - text: What to search for
+  - vectorStore: Name of the vector store
+  - topN: Number of results (default: 10)
+  - minScore: Similarity threshold (0.0-1.0, default: 0.0)
+  - selector: Optional GraphRAG filter
+  - linkToSource: true to get source triple info
+- **Returns**: Embedding IDs, similarity scores, matched text, optional source links
+- **When to use**: You need semantic search results for further processing
+
+#### For Question Answering (RAG):
+- **Tool**: \`vector_ask_documents\`
+- **Input**:
+  - question: Your question
+  - vectorStore: Name of the vector store
+  - topN: Number of chunks for context (default: 5)
+  - minScore: Similarity threshold (default: 0.8)
+  - selector: Optional GraphRAG filter
+- **Returns**: LLM-generated answer with citations
+- **When to use**: You want a direct answer to a question based on your documents
+
+### Step 4.4: Using Selectors for GraphRAG
+- **Purpose**: Pre-filter embeddings to specific subgraphs before search
+- **Syntax**: Must start with \`?id vdbprop:id ?link\`
+- **Example**: \`"{ ?id vdbprop:id ?link . ?link a myonto:Chapter . }"\`
+- **Why**: Restricts search to specific types/contexts, reduces search space, enables graph-aware RAG
+
+### Step 4.5: Link Embeddings to Source Triples
+- Use \`linkToSource: true\` in \`vector_nearest_neighbor\`
+- Or write custom SPARQL with \`?id vdbprop:id ?link\`
+- The \`?link\` variable points to the subject of the original embedded triple
+- Combine with graph patterns to understand context
+
+---
+
+## 5. Working with Multiple Repositories
+
+### Option A: Switch Repository Context
+- **Tool**: \`set_repository\`
+- **Input**: Repository name
+- **Effect**: All subsequent queries use this repository
+
+### Option B: Specify Repository Per Query
+- **Tool**: Any query tool with \`repository\` parameter
+- **Effect**: One-time override without changing context
+
+### Option C: Federated Query
+- **Tool**: \`federated_query\`
+- **Input**: Object mapping repository names to queries
+- **When**: Need to query multiple repositories and combine results
+
+---
+
+## 6. After Success: Store Your Query
+
+When you've written a successful query that solves a problem:
+
+### Step 6.1: Ask User for Permission
+- **ALWAYS ask** before storing
+- Explain what will be stored (title, description, SPARQL text, repository)
+
+### Step 6.2: Store the Query
+- **Tool**: \`store_query\`
+- **Input**:
+  - title: Short descriptive title
+  - description: Natural language explanation of what it does and why
+  - sparqlQuery: The SPARQL query text
+  - repository: Which repository it was tested on
+- **Why**: Help future users (including yourself) find this pattern
+
+---
+
+## 7. Troubleshooting Failed Queries
+
+If a query fails or returns unexpected results:
+
+1. ✅ **FIRST**: Use \`list_all_queries\` to see working patterns
+2. ✅ Check SHACL schema - did you use correct predicate URIs?
+3. ✅ Check namespaces - are your prefixes defined?
+4. ✅ Look at successful queries - how do they structure similar patterns?
+5. ✅ For text search - verify fti:match syntax from tutorial and examples
+
+**DO NOT** repeatedly guess and iterate without consulting the query library.
+
+---
+
+## Quick Reference
+
+| Task | First Tool to Use |
+|------|------------------|
+| Starting fresh | Read SHACL schema resource |
+| Writing new query | \`search_queries\` |
+| Query failed | \`list_all_queries\` (CRITICAL) |
+| Text search needed | \`read_fti_tutorial\` |
+| Vector/RAG needed | Read \`allegro://docs/vector-store\` |
+| Semantic search | \`vector_nearest_neighbor\` |
+| Question answering | \`vector_ask_documents\` |
+| Unsure about URIs | \`list_all_queries\` |
+| Wikidata properties | \`list_all_queries\` |
+| Query succeeded | \`store_query\` (with permission) |
+
+---
+
+## Remember
+
+- 🔴 **Query library is your friend** - Use it liberally, especially \`list_all_queries\`
+- 🔴 **Don't guess** - Look at working examples instead
+- 🔴 **SHACL first** - Always understand the schema before querying
+- 🔴 **Store successes** - Help build the knowledge base
+`;
+
+        return {
+          contents: [{
+            uri,
+            mimeType: 'text/markdown',
+            text: workflowDoc,
+          }],
+        };
+      }
+
       if (uri === 'allegro://docs/freetext-indexing') {
         const fs = await import('fs/promises');
         const path = await import('path');
@@ -414,6 +779,36 @@ class AllegroGraphMCPServer {
         // Go up one level from dist/ to the project root
         const projectRoot = path.dirname(__dirname);
         const docPath = path.join(projectRoot, 'freetext-index-tutorial.txt');
+
+        try {
+          const content = await fs.readFile(docPath, 'utf-8');
+          return {
+            contents: [{
+              uri,
+              mimeType: 'text/plain',
+              text: content,
+            }],
+          };
+        } catch (error) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to read documentation from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      if (uri === 'allegro://docs/vector-store') {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const { fileURLToPath } = await import('url');
+
+        // Get the directory where the compiled JS file is located
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+
+        // Go up one level from dist/ to the project root
+        const projectRoot = path.dirname(__dirname);
+        const docPath = path.join(projectRoot, 'nearest-neighbor-and-askMyDocuments.txt');
 
         try {
           const content = await fs.readFile(docPath, 'utf-8');
@@ -802,6 +1197,67 @@ query:${queryId} a query:StoredQuery ;
     };
   }
 
+  private async handleListAllQueries(args: any) {
+    const { repository } = args;
+
+    // Build SPARQL query to get ALL queries for the specified repository
+    const sparqlQuery = `
+      PREFIX query: <http://franz.com/ns/query-library#>
+      PREFIX dc: <http://purl.org/dc/terms/>
+      SELECT ?title ?description ?sparql ?repo ?created WHERE {
+        ?q a query:StoredQuery ;
+           dc:title ?title ;
+           dc:description ?description ;
+           query:sparqlText ?sparql ;
+           query:repository ?repo .
+        OPTIONAL { ?q dc:created ?created }
+        FILTER(?repo = "${repository}")
+      }
+      ORDER BY DESC(?created)
+    `;
+
+    // Query the query-library repository
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
+    }
+
+    const url = this.getRepositoryUrl('query-library');
+    const response = await this.axiosClients['query-library'].get(url, {
+      params: { query: sparqlQuery },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = response.data.results.bindings;
+    if (results.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No queries found for repository "${repository}"`,
+          },
+        ],
+      };
+    }
+
+    const formattedResults = results.map((r: any) => ({
+      title: r.title.value,
+      description: r.description.value,
+      repository: r.repo.value,
+      sparql: r.sparql.value,
+      created: r.created?.value
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Found ${results.length} queries for repository "${repository}":\n${JSON.stringify(formattedResults, null, 2)}`,
+        },
+      ],
+    };
+  }
+
   private async handleListFtiIndices(args: any) {
     const { repository } = args;
     const repoName = repository || this.currentRepository;
@@ -890,6 +1346,208 @@ query:${queryId} a query:StoredQuery ;
         ErrorCode.InternalError,
         `Failed to read freetext indexing tutorial from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
       );
+    }
+  }
+
+  private async handleVectorNearestNeighbor(args: any) {
+    const {
+      text,
+      vectorStore,
+      repository,
+      topN = 10,
+      minScore = 0.0,
+      selector,
+      useClustering = false,
+      linkToSource = false
+    } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    // Build the SPARQL query using llm:nearestNeighbor
+    let sparqlQuery = `PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/>
+PREFIX kw: <http://franz.com/ns/keyword#>
+PREFIX vdbprop: <http://franz.com/vdb/prop/>
+
+SELECT ?id ?score ?text `;
+
+    if (linkToSource) {
+      sparqlQuery += `?link ?linkType `;
+    }
+
+    sparqlQuery += `WHERE {
+  (?id ?score ?text) llm:nearestNeighbor ("${text.replace(/"/g, '\\"')}" "${vectorStore}" kw:topN ${topN} kw:minScore ${minScore}`;
+
+    if (selector) {
+      sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
+    }
+
+    if (useClustering) {
+      sparqlQuery += ` kw:useClustering true`;
+    }
+
+    sparqlQuery += `) .`;
+
+    if (linkToSource) {
+      sparqlQuery += `
+  ?id vdbprop:id ?link .
+  OPTIONAL { ?link a ?linkType }`;
+    }
+
+    sparqlQuery += `
+}`;
+
+    // Execute the query
+    const url = this.getRepositoryUrl(repoName);
+    const response = await this.axiosClients[repoName].get(url, {
+      params: { query: sparqlQuery },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = response.data.results.bindings;
+    if (results.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No results found for nearest neighbor search on vector store '${vectorStore}' with minScore ${minScore}`,
+          },
+        ],
+      };
+    }
+
+    const formattedResults = results.map((r: any) => {
+      const result: any = {
+        id: r.id?.value,
+        score: parseFloat(r.score?.value || '0'),
+        text: r.text?.value,
+      };
+      if (linkToSource) {
+        result.sourceLink = r.link?.value;
+        result.sourceType = r.linkType?.value;
+      }
+      return result;
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Nearest Neighbor Results from vector store '${vectorStore}' (${results.length} results):\n${JSON.stringify(formattedResults, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleVectorAskDocuments(args: any) {
+    const {
+      question,
+      vectorStore,
+      repository,
+      topN = 5,
+      minScore = 0.8,
+      selector,
+      useClustering = false
+    } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    // Build the SPARQL query using llm:askMyDocuments
+    let sparqlQuery = `PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/>
+PREFIX kw: <http://franz.com/ns/keyword#>
+
+SELECT ?response ?score ?citationId ?citedText WHERE {
+  (?response ?score ?citationId ?citedText) llm:askMyDocuments ("${question.replace(/"/g, '\\"')}" "${vectorStore}" kw:topN ${topN} kw:minScore ${minScore}`;
+
+    if (selector) {
+      sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
+    }
+
+    if (useClustering) {
+      sparqlQuery += ` kw:useClustering true`;
+    }
+
+    sparqlQuery += `)
+}`;
+
+    // Execute the query
+    const url = this.getRepositoryUrl(repoName);
+    const response = await this.axiosClients[repoName].get(url, {
+      params: { query: sparqlQuery },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = response.data.results.bindings;
+    if (results.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No results found for RAG query on vector store '${vectorStore}' with minScore ${minScore}`,
+          },
+        ],
+      };
+    }
+
+    // Extract the response (same across all rows) and citations
+    const ragResponse = results[0].response?.value || '';
+    const citations = results.map((r: any) => ({
+      citationId: r.citationId?.value,
+      score: parseFloat(r.score?.value || '0'),
+      citedText: r.citedText?.value,
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `RAG Response from vector store '${vectorStore}':\n\nResponse: ${ragResponse}\n\nCitations (${citations.length}):\n${JSON.stringify(citations, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleCheckVectorStore(args: any) {
+    const { repository } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    const config = this.config.repositories[repoName];
+    const url = `${this.getRepositoryUrl(repoName)}/vector-store-p`;
+
+    try {
+      const response = await this.axiosClients[repoName].get(url, {
+        headers: { Accept: 'text/plain' },
+      });
+
+      const isVectorStore = response.data === true || response.data === 'true';
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Repository '${repoName}' is ${isVectorStore ? 'a vector store' : 'NOT a vector store'}`,
+          },
+        ],
+      };
+    } catch (error) {
+      // If endpoint doesn't exist or returns error, assume not a vector store
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Repository '${repoName}' is NOT a vector store (or vector-store-p endpoint unavailable)`,
+          },
+        ],
+      };
     }
   }
 

@@ -1,0 +1,214 @@
+;;; HOW TO WORK WITH ALLEGROGRAPH VECTOR STORE IN SPARQL
+
+AllegroGraph has a built in vector store that you can use for RAG
+purposes. The two most important magic sparql predicates to work with the
+vectorstore are
+
+- llm:nearestNeigbor
+- llm:askMyDocuments
+
+I'll start with some usage patterns and then at the end of this
+document you find some more formal info from our documentation about
+the two functions.
+
+Context for this example: we have a triple store with the works
+of Noam Chomsky. All the unstructured data that Chomsky produced is
+split in smaller chunks, usually based on paragraphs. The paragraphs
+are embedded and here are some examples on how to use it
+
+example 1: nearestNeigbor (NN)
+
+in this example we find the nearestNeigbor for the phrase 'fight
+against poverty'. On the left hand site we see that three variables
+get returned by the magic predicate llm:nearestNeighbor. First we have
+the ?id for the embedding (how we link it back to the originating
+triples is in the next example) then the ?score for the
+cosine-distance, and finally the ?term for the text that we found. On
+the right hand side we first find the phrase we are interested
+in. Then 'chomsky' is the vector store where we find the embeddings
+(in this case it is the same store but it could also be another
+store). And finally the :minScore for what we accept as high enough
+for nearest neigbor and then :topN gives the max number of objects to
+be returned. We see that the prefix : is defined so we can use nice
+looking keywords on the right hand side. If you want to use the prefix
+: for something else you have to use the kw namespace (defined in
+allegrograph) like this    kw:minScore
+
+prefix : <http://franz.com/ns/keyword#>
+select ?term ?score ?id { 
+  (?id ?score ?term) llm:nearestNeighbor ('fight against poverty' 'chomsky' :minScore 0.0 :topN 100) 
+}
+
+example 2: nearest neighbor and how to link it to the triples where
+the terms came from. Note that in this example the ?id is the
+embedding id, this embedding id is linked via the vdbprop:id predicate
+to the triple where it came from. In this case ?link is the subject of
+that triple. 
+
+prefix : <http://franz.com/ns/keyword#>
+select ?term ?class { 
+  (?id ?dist ?term) llm:nearestNeighbor ('fight against poverty' 'chomsky' :minScore 0.0 :topN 10) .
+   ?id vdbprop:id ?link .
+   ?link a ?class .
+}
+
+example 3: nearest neighbor with a selector.
+
+In the previous example you can do filtering after you found the topN
+nearest neighbors. In the example below you do pre-filtering for
+nearest neighbor, you only do nearest neigbor on the terms found by
+the sparql query in the selector. The only restriction on the sparql
+expression is that it starts with the ?id vdbprop:id ?link... 
+There are two huge benefits to this. 1. You restrict the number of
+terms NN has to look at, 2. You can determine exactly where you want
+to look for a NN and you can use the entire power of the
+graph. Absolutely important for GraphRAG.
+
+prefix : <http://franz.com/ns/keyword#>
+select ?term  { 
+  (?id ?dist ?term) llm:nearestNeighbor ('fight against poverty' 'chomsky' :minScore 0.0 :topN 10
+                           :selector "{ ?id vdbprop:id ?link . ?link a chomsky:Answer . }" )
+}
+
+example 4: askMyDocuments for RAG
+
+This is basically RAG and builds on NN. First we do an NN like we do
+above, and then we send the topN terms found with the original phrase
+back to an LLM and then present the answer. On the left hand side
+?response is obviously the RAG answer, ?score the score of the highest
+NN term found, ?citationId the URI of the triple of the term used and
+?citedText the text used.
+
+prefix : <http://franz.com/ns/keyword#>
+select ?response  { 
+    (?response ?score ?citationId ?citedText)  llm:askMyDocuments  ("what are the causes of poverty" "chomsky" :topN 10 :minScore 0.4 )
+  }
+
+example 5: askMyDocuments can use selector too..
+
+prefix : <http://franz.com/ns/keyword#>
+select ?response ?score ?citedText { 
+    (?response ?score ?citationId ?citedText)  llm:askMyDocuments  ("what are the causes of poverty" "chomsky" :topN 10 :minScore 0.4 
+                                               :selector "{ ?id vdbprop:id ?link . ?link a chomsky:Paragraph . }")
+  }
+
+
+
+;;;;;;;;;;;;;;; basic info on nearestNeighbor
+
+http://franz.com/ns/allegrograph/8.0.0/llm/nearestNeighbor
+Namespace:
+
+PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/> 
+General forms:
+
+(?uri ?score ?originalText) llm:nearestNeighbor (?text ?vectorRepoSpec ?topN ?minScore ?selector ?useClustering ?apiKey)  
+(?uri ?score) llm:nearestNeighbor (?text ?vectorRepoSpec ?topN ?minScore ?selector :apiKey ?apiKey)  
+?uri llm:nearestNeighbor (?text ?vectorRepoSpec ?topN ?minScore ?selector :apiKey ?apiKey) 
+For example, the pattern
+
+?uri llm:nearestNeighbor ("Famous Scientist" "historicalFigures" 10 0.8) 
+will bind ?uri to each of up to 10 subject nodes in the vector database historicalFigures where the match score between the embedding vector of "Famous Scientist" and the embeddings of the original text in the database is at least 0.8. API JSON response.
+
+The predicate binds an optional second parameter ?score with the value of the match score. It binds an optional third parameter ?originalText with the value of the original text.
+
+The ?useClustering argument is optional and if given any value it will run a different algorithm which quickly returns an approximation of the nearest neighbor. The first time the approximation algorithm is run on a vector repo an index will be built inside the repo and this can take some time. Subsequent invocations will return an answer very quickly. Using this algorithm only makes sense when the full nearest neighbor is too slow due to having to check a very large number of objects in the vector database.
+
+The ?apiKey argument is optional and if given overrides the api-key, if any, found in the vector database. It also overrides any other way that the api-key may have been specified.
+
+The ?selector argument is optional. If given it should be the body of a sparql query where the result should be bindings for ?id which are resources in the vector database that have rdf:type of vdb:Object. The default value for ?selector is
+
+"{?id rdf:type vdb:Object}" 
+In the Sparql expression the namespaces vdb and vdbprop are defined.
+
+prefix vdb: <http://franz.com/vdb/gen/>  
+prefix vdbprop: <http://franz.com/vdb/prop/>  
+ 
+
+
+;;;;;;;;;;;;;;; basic info on askMyDocuments
+
+http://franz.com/ns/allegrograph/8.0.0/llm/askMyDocuments
+Collect background information from a vector database to build a prompt and return the response to that prompt, along with matching URI citationIds and matching scores.
+
+Namespace:
+
+PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/> 
+General forms:
+
+The general form of askMyDocuments is:
+
+(?response ?score ?citationId ?citedText)  
+llm:askMyDocuments  
+(?text ?vectorRepoSpec ?topN ?minScore ?selector ?useClustering)  
+Only ?response, ?text and ?vectorRepoSpec are required. The remaining variables are optional. This predicate uses keyword syntax, so you can include any subset of the optional variables in any order when they are tagged with keywords.
+
+For example
+
+(?response :citedText ?citedText)  
+llm:askMyDocuments  
+(?text ?vectorRepoSpec :minScore 0.5 :useClustering "true"^^xsd:boolearn)) 
+This predicate implements Retrieval Augmented Generation (RAG) by collecting background information through embedding based matching. Beginning with a search of ?vectorRepoSpec for the ?topN best matches to ?text, above a minimum matching score of ?minScore. It then combines this question, the matching citationIds and background info into a big prompt for the LLM. This helps ensure that the LLM has a source of truth to answer the question, and reduces the chance of hallucination.
+
+The big prompt combines various bits like the following sketch:
+
+ Here is a list of citation IDs and content related to the query <query>  
+ with these <citations>. Respond to the query as though you wrote the  
+ content. Be brief. You only have 20 seconds to reply.  
+ Place your response to the query in the response field.  
+ Insert the list of citations whose content informed the  
+ response into the citation_ids array. 
+Processing the big prompt text also causes the LLM to return only those citationIds whose content contributed to the final response.
+
+The optional object parameter ?topN, if not specified, has a default value of 5,
+
+The optional object parameter ?minScore, if not specified, has a default value of 0.8,
+
+The predicate returns a response as well as the matching score, citationId URI, and source content from the vector database.
+
+Note that llm:askMyDocuments may utilize keyword syntax.
+
+You can use agtool to build a vector database from text literals stored in an Allegrograph repository (see the documentation on using agtool for LLM embedding).
+
+;; I let Claude read the above and it asked me a number
+   questions. There are answers here:
+
+1. Vector Store Creation & Management:
+    - How is a vector store like "chomsky" created? Is it created separately from the repository, or is it part of the repository
+  configuration?
+
+      Don't worry about this, but we can create vector stores after we already
+      created the triple store. Note that the vector store can be part
+      of a store or it can be separate from a store. 
+ 
+    - Can I list available vector stores in a repository
+      programmatically (via REST API or SPARQL)?
+
+      No, but here is a rest specification to ask if a store is a
+      vector store. Note that catalogs, and shards are optional.
+
+      catalogs / [CATNAME] / repositories / [REPONAME] / shards / [ID] / vector-store-p
+       return true if store in a vector store
+
+  2. The vdbprop:id linking mechanism:
+    - In example 2, you show ?id vdbprop:id ?link - is ?link always the subject of the original triple that was embedded?
+    - If I embed a literal object (like a paragraph text), does ?link point to the subject that has that literal, or to a specific
+  statement/context?
+  3. Keyword namespace:
+    - I see you can use either : prefix (with prefix : <http://franz.com/ns/keyword#>) or kw: prefix for keywords like :topN,
+  :minScore, :selector
+    - Are kw: and the keyword namespace pre-defined in AllegroGraph, or do I need to declare it?
+  4. API Keys:
+    - The tutorial mentions :apiKey parameters - when would these be needed? Is this for accessing external LLM services for the
+  askMyDocuments RAG functionality?
+    - What LLM providers does AllegroGraph support by default?
+  5. Error cases:
+    - What happens if the specified vector store (e.g., "chomsky") doesn't exist?
+    - What happens if no results meet the minScore threshold?
+  6. Return format for askMyDocuments:
+    - The ?response variable contains the LLM-generated text - is this always plain text, or can it be formatted (markdown, HTML,
+  etc.)?
+    - How are multiple citations handled in the ?citationId and ?citedText - are these single values or can they be lists?
+
+  The examples are clear and give me a good sense of the patterns. With answers to these questions, I'll be confident in building
+  queries and potentially adding vector store tools to the MCP server!
