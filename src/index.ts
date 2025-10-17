@@ -1574,6 +1574,9 @@ SELECT ?response ?score ?citationId ?citedText WHERE {
     const config = this.config.repositories[repoName];
     const url = `${this.getRepositoryUrl(repoName)}/vector-store-p`;
 
+    // Compute vector store name format
+    const vectorStoreName = config.catalog === 'root' ? repoName : `${config.catalog}:${repoName}`;
+
     try {
       const response = await this.axiosClients[repoName].get(url, {
         headers: { Accept: 'text/plain' },
@@ -1581,14 +1584,25 @@ SELECT ?response ?score ?citationId ?citedText WHERE {
 
       const isVectorStore = response.data === true || response.data === 'true';
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Repository '${repoName}' is ${isVectorStore ? 'a vector store' : 'NOT a vector store'}`,
-          },
-        ],
-      };
+      if (isVectorStore) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Repository '${repoName}' is a vector store.\n\nIMPORTANT: For vector queries (llm:nearestNeighbor, llm:askMyDocuments), use the vector store name: "${vectorStoreName}"`,
+            },
+          ],
+        };
+      } else {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Repository '${repoName}' is NOT a vector store`,
+            },
+          ],
+        };
+      }
     } catch (error) {
       // If endpoint doesn't exist or returns error, assume not a vector store
       return {
@@ -1607,12 +1621,17 @@ SELECT ?response ?score ?citationId ?citedText WHERE {
     const url = `${this.getRepositoryUrl(repoName)}/size`;
     const response = await this.axiosClients[repoName].get(url);
 
+    // Compute vector store name format
+    const vectorStoreName = config.catalog === 'root' ? repoName : `${config.catalog}:${repoName}`;
+
     return {
       repository: repoName,
       catalog: config.catalog,
       tripleCount: response.data,
       endpoint: `${config.protocol || 'https'}://${config.host}:${config.port}${this.getRepositoryUrl(repoName)}`,
       current: repoName === this.currentRepository,
+      vectorStoreName: vectorStoreName,
+      vectorStoreNameNote: `For vector operations (llm:nearestNeighbor, llm:askMyDocuments), use: "${vectorStoreName}"`,
     };
   }
 
