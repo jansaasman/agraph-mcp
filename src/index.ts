@@ -323,8 +323,16 @@ class AllegroGraphMCPServer {
             },
           },
           {
+            name: 'read_vector_tutorial',
+            description: 'CRITICAL: Read this FIRST before using vector_nearest_neighbor or vector_ask_documents tools. Returns the complete vector store tutorial with llm:nearestNeighbor and llm:askMyDocuments SPARQL examples, selector syntax for GraphRAG, and detailed Q&A about vector store operations.',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+          {
             name: 'vector_nearest_neighbor',
-            description: 'Execute a nearest neighbor search using AllegroGraph vector embeddings. Returns embeddings similar to the input text based on cosine similarity. Use this for semantic search and retrieval. For RAG (combining search with LLM response), use vector_ask_documents instead.',
+            description: 'IMPORTANT: Before using this tool, READ the resource allegro://docs/vector-store to understand llm:nearestNeighbor syntax and examples. Execute a nearest neighbor search using AllegroGraph vector embeddings. Returns embeddings similar to the input text based on cosine similarity. Use this for semantic search and retrieval. For RAG (combining search with LLM response), use vector_ask_documents instead.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -370,7 +378,7 @@ class AllegroGraphMCPServer {
           },
           {
             name: 'vector_ask_documents',
-            description: 'Execute RAG (Retrieval Augmented Generation) using AllegroGraph vector embeddings. First finds nearest neighbors, then sends them with your question to an LLM for a response. Returns the LLM response along with citations. Use this for question-answering over your document embeddings.',
+            description: 'IMPORTANT: Before using this tool, READ the resource allegro://docs/vector-store to understand llm:askMyDocuments syntax and examples. Execute RAG (Retrieval Augmented Generation) using AllegroGraph vector embeddings. First finds nearest neighbors, then sends them with your question to an LLM for a response. Returns the LLM response along with citations. Use this for question-answering over your document embeddings.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -461,6 +469,8 @@ class AllegroGraphMCPServer {
             return await this.handleGetFtiIndexConfig(args);
           case 'read_fti_tutorial':
             return await this.handleReadFtiTutorial();
+          case 'read_vector_tutorial':
+            return await this.handleReadVectorTutorial();
           case 'vector_nearest_neighbor':
             return await this.handleVectorNearestNeighbor(args);
           case 'vector_ask_documents':
@@ -1345,6 +1355,37 @@ query:${queryId} a query:StoredQuery ;
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to read freetext indexing tutorial from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleReadVectorTutorial() {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+
+    // Get the directory where the compiled JS file is located
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    // Go up one level from dist/ to the project root
+    const projectRoot = path.dirname(__dirname);
+    const docPath = path.join(projectRoot, 'nearest-neighbor-and-askMyDocuments.txt');
+
+    try {
+      const content = await fs.readFile(docPath, 'utf-8');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: content,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to read vector store tutorial from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
