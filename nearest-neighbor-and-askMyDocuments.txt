@@ -11,6 +11,25 @@ I'll start with some usage patterns and then at the end of this
 document you find some more formal info from our documentation about
 the two functions.
 
+CRITICAL: VECTOR STORE NAMING CONVENTION
+=========================================
+When specifying a vector store name in llm:nearestNeighbor or llm:askMyDocuments,
+the format depends on which catalog the repository is in:
+
+- ROOT CATALOG:     Use just the repository name: "chomsky47"
+- NON-ROOT CATALOG: Use "catalog:repository" format: "demos:chomsky47"
+
+Examples for the demos catalog (non-root):
+  - CORRECT: "demos:chomsky47"  (catalog is "demos", repository is "chomsky47")
+  - WRONG:   "chomsky47"        (missing catalog prefix - will fail with "Unable to open triple-store" error!)
+
+Examples for the root catalog:
+  - CORRECT: "myrepo"           (repository is in root catalog)
+  - WRONG:   "root:myrepo"      (don't use "root:" prefix)
+
+In all examples below, 'chomsky' refers to a repository in a catalog named "demos",
+so you should use 'demos:chomsky47' (or the appropriate catalog:repository) in real queries.
+
 Context for this example: we have a triple store with the works
 of Noam Chomsky. All the unstructured data that Chomsky produced is
 split in smaller chunks, usually based on paragraphs. The paragraphs
@@ -190,25 +209,68 @@ You can use agtool to build a vector database from text literals stored in an Al
       catalogs / [CATNAME] / repositories / [REPONAME] / shards / [ID] / vector-store-p
        return true if store in a vector store
 
+      for example: 
+      curl https://demos:demos@flux.franz.com:10000/catalogs/demos/repositories/chomsky47/vector-store-p
+
+      returns false, and after embeddings will return true
+
   2. The vdbprop:id linking mechanism:
-    - In example 2, you show ?id vdbprop:id ?link - is ?link always the subject of the original triple that was embedded?
+    - In example 2, you show ?id vdbprop:id ?link - is ?link always
+      the subject of the original triple that was embedded?
+
+      yes (well, you can use another name for ?link of course)
+
     - If I embed a literal object (like a paragraph text), does ?link point to the subject that has that literal, or to a specific
-  statement/context?
+      statement/context?
+
+      good question, and a design problem in allegrograph, it only
+      points to the subject.
+
   3. Keyword namespace:
     - I see you can use either : prefix (with prefix : <http://franz.com/ns/keyword#>) or kw: prefix for keywords like :topN,
-  :minScore, :selector
-    - Are kw: and the keyword namespace pre-defined in AllegroGraph, or do I need to declare it?
+       :minScore, :selector
+    - Are kw: and the keyword namespace pre-defined in AllegroGraph,
+  or do I need to declare it?
+
+     kw is defined, : is up to the user
+
+
   4. API Keys:
     - The tutorial mentions :apiKey parameters - when would these be needed? Is this for accessing external LLM services for the
-  askMyDocuments RAG functionality?
+      askMyDocuments RAG functionality?
+
+      In general you would have set this in agwebview or
+      programmatically, don't worry about it. 
     - What LLM providers does AllegroGraph support by default?
+
+      openAI, Antropic, Gemini, and several others. Just assume that
+      vendor and model and apikey are set.
+ 
   5. Error cases:
-    - What happens if the specified vector store (e.g., "chomsky") doesn't exist?
+    - What happens if the specified vector store (e.g., "chomsky")
+      doesn't exist?
+
+      pls just return false
+
     - What happens if no results meet the minScore threshold?
+
+      then there won't be any results
+
   6. Return format for askMyDocuments:
     - The ?response variable contains the LLM-generated text - is this always plain text, or can it be formatted (markdown, HTML,
   etc.)?
-    - How are multiple citations handled in the ?citationId and ?citedText - are these single values or can they be lists?
+
+      it will be always plain. Note that we have also a predicate
+      llm:response that allows you to ask questions in SPARQL directly
+      to an LLM, in that predicate you can also ask for markdown
+      responses.
+
+    - How are multiple citations handled in the ?citationId and
+      ?citedText - are these single values or can they be lists?
+
+      Well, the response will always will be the same, but the
+      citationID points to the various terms that were used for the
+      response. 
 
   The examples are clear and give me a good sense of the patterns. With answers to these questions, I'll be confident in building
   queries and potentially adding vector store tools to the MCP server!
