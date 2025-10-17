@@ -334,7 +334,7 @@ class AllegroGraphMCPServer {
                 },
                 vectorStore: {
                   type: 'string',
-                  description: 'Name of the vector store to search (can be same as repository or different)',
+                  description: 'Name of the vector store to search. Use repository name (e.g., "chomsky47") for embedded vector stores, or "catalog:repository" format (e.g., "demos:chomsky47") for explicit specification.',
                 },
                 repository: {
                   type: 'string',
@@ -380,7 +380,7 @@ class AllegroGraphMCPServer {
                 },
                 vectorStore: {
                   type: 'string',
-                  description: 'Name of the vector store to search',
+                  description: 'Name of the vector store to search. Use repository name (e.g., "chomsky47") for embedded vector stores, or "catalog:repository" format (e.g., "demos:chomsky47") for explicit specification.',
                 },
                 repository: {
                   type: 'string',
@@ -1366,6 +1366,11 @@ query:${queryId} a query:StoredQuery ;
       throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
     }
 
+    // Prepare vector store specification
+    // If vectorStore doesn't contain ':', prepend catalog:
+    const config = this.config.repositories[repoName];
+    const vectorStoreSpec = vectorStore.includes(':') ? vectorStore : `${config.catalog}:${vectorStore}`;
+
     // Build the SPARQL query using llm:nearestNeighbor
     let sparqlQuery = `PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/>
 PREFIX kw: <http://franz.com/ns/keyword#>
@@ -1378,7 +1383,7 @@ SELECT ?id ?score ?text `;
     }
 
     sparqlQuery += `WHERE {
-  (?id ?score ?text) llm:nearestNeighbor ("${text.replace(/"/g, '\\"')}" "${vectorStore}" kw:topN ${topN} kw:minScore ${minScore}`;
+  (?id ?score ?text) llm:nearestNeighbor ("${text.replace(/"/g, '\\"')}" "${vectorStoreSpec}" kw:topN ${topN} kw:minScore ${minScore}`;
 
     if (selector) {
       sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
@@ -1457,12 +1462,17 @@ SELECT ?id ?score ?text `;
       throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
     }
 
+    // Prepare vector store specification
+    // If vectorStore doesn't contain ':', prepend catalog:
+    const config = this.config.repositories[repoName];
+    const vectorStoreSpec = vectorStore.includes(':') ? vectorStore : `${config.catalog}:${vectorStore}`;
+
     // Build the SPARQL query using llm:askMyDocuments
     let sparqlQuery = `PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/>
 PREFIX kw: <http://franz.com/ns/keyword#>
 
 SELECT ?response ?score ?citationId ?citedText WHERE {
-  (?response ?score ?citationId ?citedText) llm:askMyDocuments ("${question.replace(/"/g, '\\"')}" "${vectorStore}" kw:topN ${topN} kw:minScore ${minScore}`;
+  (?response ?score ?citationId ?citedText) llm:askMyDocuments ("${question.replace(/"/g, '\\"')}" "${vectorStoreSpec}" kw:topN ${topN} kw:minScore ${minScore}`;
 
     if (selector) {
       sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
