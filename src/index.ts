@@ -1130,6 +1130,23 @@ If a query fails or returns unexpected results:
       throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
     }
 
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+    }
+
     const url = this.getRepositoryUrl('query-library');
     const response = await this.axiosClients['query-library'].get(url, {
       params: { query: sparqlQuery },
@@ -1169,6 +1186,29 @@ If a query fails or returns unexpected results:
   private async handleStoreQuery(args: any) {
     const { title, description, sparqlQuery, repository } = args;
 
+    // Check if query-library repository exists
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found. Cannot store queries without a query-library repository configured.');
+    }
+
+    // Ensure axios client exists for query-library (create on-demand if needed)
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000, // 10 second timeout
+      });
+    }
+
     // Generate a unique ID for the query
     const queryId = `query-${Date.now()}`;
 
@@ -1185,12 +1225,6 @@ query:${queryId} a query:StoredQuery ;
     dc:created "${new Date().toISOString()}"^^xsd:dateTime ;
     query:successful true .
 `;
-
-    // Store in query-library repository
-    const queryLibraryConfig = this.config.repositories['query-library'];
-    if (!queryLibraryConfig) {
-      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
-    }
 
     const url = `${this.getRepositoryUrl('query-library')}/statements`;
     const response = await this.axiosClients['query-library'].post(url, turtle, {
@@ -1230,6 +1264,23 @@ query:${queryId} a query:StoredQuery ;
     const queryLibraryConfig = this.config.repositories['query-library'];
     if (!queryLibraryConfig) {
       throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found');
+    }
+
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
     }
 
     const url = this.getRepositoryUrl('query-library');
