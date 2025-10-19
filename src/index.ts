@@ -57,7 +57,7 @@ class AllegroGraphMCPServer {
     this.server = new Server(
       {
         name: 'allegro-graph-multi-server',
-        version: '0.2.0',
+        version: '0.4.0',
       },
       {
         capabilities: {
@@ -270,6 +270,55 @@ class AllegroGraphMCPServer {
             },
           },
           {
+            name: 'store_query_visualization',
+            description: 'Store a visualization configuration for a query in the library. Links the visualization to an existing stored query by finding its URI. This allows Claude to quickly recreate visualizations without regenerating them. Always ASK the user for confirmation before storing.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                queryTitle: {
+                  type: 'string',
+                  description: 'Title of the query this visualization belongs to (must match an existing stored query)',
+                },
+                visualizationType: {
+                  type: 'string',
+                  enum: ['bar_chart', 'line_chart', 'pie_chart', 'scatter_plot', 'table', 'network_graph', 'timeline', 'heatmap', 'treemap', 'sankey', 'other'],
+                  description: 'Type of visualization',
+                },
+                visualizationConfig: {
+                  type: 'string',
+                  description: 'JSON string containing the visualization configuration (chart.js config, mermaid diagram, D3 config, or other format)',
+                },
+                description: {
+                  type: 'string',
+                  description: 'Description of what the visualization shows and why it is useful',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository the query was run against',
+                },
+              },
+              required: ['queryTitle', 'visualizationType', 'visualizationConfig', 'description', 'repository'],
+            },
+          },
+          {
+            name: 'get_query_visualizations',
+            description: 'Get all stored visualizations for a specific query by its title. Use this to quickly recreate visualizations without regenerating them.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                queryTitle: {
+                  type: 'string',
+                  description: 'Title of the query to get visualizations for',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional)',
+                },
+              },
+              required: ['queryTitle'],
+            },
+          },
+          {
             name: 'list_all_queries',
             description: 'CRITICAL: Use this tool IMMEDIATELY when: (1) A SPARQL query fails or returns unexpected results, (2) You are unsure about URI meanings or predicate usage, (3) Working with cryptic Wikidata properties (e.g., wdt:P19), or (4) Before writing complex queries. Returns ALL successful queries with their natural language descriptions for the specified repository. This shows you working patterns where rdfs:label/skos:label reveal URI meanings, proper predicate usage, and proven query structures. Essential for learning vocabulary through examples rather than guessing.',
             inputSchema: {
@@ -430,6 +479,29 @@ class AllegroGraphMCPServer {
               },
             },
           },
+          {
+            name: 'generate_sparql_only',
+            description: 'IMPORTANT: Use this tool when the user starts their request with "sparql:" or explicitly asks for ONLY the SPARQL query without execution. This tool analyzes the user question, checks the SHACL schema, searches the query library for patterns, and returns ONLY the SPARQL query text - nothing else. Does NOT execute the query.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                question: {
+                  type: 'string',
+                  description: 'The natural language question to convert to SPARQL (e.g., "how many chapters are in a book")',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name (optional, uses current if not specified)',
+                },
+                includeComments: {
+                  type: 'boolean',
+                  description: 'Include helpful comments in the SPARQL query explaining each part (default: false)',
+                  default: false,
+                },
+              },
+              required: ['question'],
+            },
+          },
         ],
       };
     });
@@ -461,6 +533,10 @@ class AllegroGraphMCPServer {
             return await this.handleSearchQueries(args);
           case 'store_query':
             return await this.handleStoreQuery(args);
+          case 'store_query_visualization':
+            return await this.handleStoreQueryVisualization(args);
+          case 'get_query_visualizations':
+            return await this.handleGetQueryVisualizations(args);
           case 'list_all_queries':
             return await this.handleListAllQueries(args);
           case 'list_fti_indices':
@@ -477,6 +553,8 @@ class AllegroGraphMCPServer {
             return await this.handleVectorAskDocuments(args);
           case 'check_vector_store':
             return await this.handleCheckVectorStore(args);
+          case 'generate_sparql_only':
+            return await this.handleGenerateSparqlOnly(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -1241,6 +1319,179 @@ query:${queryId} a query:StoredQuery ;
     };
   }
 
+  private async handleStoreQueryVisualization(args: any) {
+    const { queryTitle, visualizationType, visualizationConfig, description, repository } = args;
+
+    // Check if query-library repository exists
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found. Cannot store visualizations without a query-library repository configured.');
+    }
+
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+    }
+
+    // Step 1: Find the query URI by searching for the title
+    const findQuerySparql = `
+      PREFIX query: <http://franz.com/ns/query-library#>
+      PREFIX dc: <http://purl.org/dc/terms/>
+      SELECT ?queryUri WHERE {
+        ?queryUri a query:StoredQuery ;
+                  dc:title """${queryTitle.replace(/"/g, '\\"')}""" ;
+                  query:repository "${repository}" .
+      }
+      LIMIT 1
+    `;
+
+    const url = this.getRepositoryUrl('query-library');
+    const findResponse = await this.axiosClients['query-library'].get(url, {
+      params: { query: findQuerySparql },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = findResponse.data.results.bindings;
+    if (results.length === 0) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `No stored query found with title "${queryTitle}" for repository "${repository}". Please store the query first using store_query.`
+      );
+    }
+
+    const queryUri = results[0].queryUri.value;
+
+    // Step 2: Generate a unique ID for the visualization
+    const vizId = `viz-${Date.now()}`;
+
+    // Step 3: Store the visualization linked to the query URI
+    const turtle = `@prefix query: <http://franz.com/ns/query-library#> .
+@prefix dc: <http://purl.org/dc/terms/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix viz: <http://franz.com/ns/visualization#> .
+
+viz:${vizId} a viz:Visualization ;
+    viz:forQuery <${queryUri}> ;
+    viz:type "${visualizationType}" ;
+    viz:config """${visualizationConfig.replace(/"/g, '\\"')}""" ;
+    dc:description """${description.replace(/"/g, '\\"')}""" ;
+    dc:created "${new Date().toISOString()}"^^xsd:dateTime .
+`;
+
+    const storeUrl = `${this.getRepositoryUrl('query-library')}/statements`;
+    await this.axiosClients['query-library'].post(storeUrl, turtle, {
+      headers: { 'Content-Type': 'text/turtle' },
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Visualization stored successfully!\nVisualization ID: ${vizId}\nLinked to query: ${queryUri}\nType: ${visualizationType}\nQuery Title: ${queryTitle}`,
+        },
+      ],
+    };
+  }
+
+  private async handleGetQueryVisualizations(args: any) {
+    const { queryTitle, repository } = args;
+
+    // Check if query-library repository exists
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found.');
+    }
+
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+    }
+
+    // Build SPARQL query to find visualizations for the query
+    let sparqlQuery = `
+      PREFIX query: <http://franz.com/ns/query-library#>
+      PREFIX dc: <http://purl.org/dc/terms/>
+      PREFIX viz: <http://franz.com/ns/visualization#>
+      SELECT ?vizId ?type ?config ?description ?created WHERE {
+        ?queryUri a query:StoredQuery ;
+                  dc:title """${queryTitle.replace(/"/g, '\\"')}""" `;
+
+    if (repository) {
+      sparqlQuery += `;
+                  query:repository "${repository}" `;
+    }
+
+    sparqlQuery += `.
+        ?vizId a viz:Visualization ;
+               viz:forQuery ?queryUri ;
+               viz:type ?type ;
+               viz:config ?config ;
+               dc:description ?description .
+        OPTIONAL { ?vizId dc:created ?created }
+      }
+      ORDER BY DESC(?created)
+    `;
+
+    const url = this.getRepositoryUrl('query-library');
+    const response = await this.axiosClients['query-library'].get(url, {
+      params: { query: sparqlQuery },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const results = response.data.results.bindings;
+    if (results.length === 0) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `No visualizations found for query "${queryTitle}"${repository ? ` in repository "${repository}"` : ''}`,
+          },
+        ],
+      };
+    }
+
+    const formattedResults = results.map((r: any) => ({
+      vizId: r.vizId.value,
+      type: r.type.value,
+      config: r.config.value,
+      description: r.description.value,
+      created: r.created?.value
+    }));
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Found ${results.length} visualization(s) for query "${queryTitle}":\n${JSON.stringify(formattedResults, null, 2)}`,
+        },
+      ],
+    };
+  }
+
   private async handleListAllQueries(args: any) {
     const { repository } = args;
 
@@ -1475,7 +1726,7 @@ SELECT ?id ?score ?text `;
     }
 
     sparqlQuery += `WHERE {
-  (?id ?score ?text) llm:nearestNeighbor ("${text.replace(/"/g, '\\"')}" "${vectorStoreSpec}" kw:topN ${topN} kw:minScore ${minScore}`;
+  (?id ?score ?text) llm:nearestNeighbor ('${text.replace(/'/g, "\\'")}' '${vectorStoreSpec}' kw:topN ${topN} kw:minScore ${minScore}`;
 
     if (selector) {
       sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
@@ -1564,7 +1815,7 @@ SELECT ?id ?score ?text `;
 PREFIX kw: <http://franz.com/ns/keyword#>
 
 SELECT ?response ?score ?citationId ?citedText WHERE {
-  (?response ?score ?citationId ?citedText) llm:askMyDocuments ("${question.replace(/"/g, '\\"')}" "${vectorStoreSpec}" kw:topN ${topN} kw:minScore ${minScore}`;
+  (?response ?score ?citationId ?citedText) llm:askMyDocuments ('${question.replace(/'/g, "\\'")}' '${vectorStoreSpec}' kw:topN ${topN} kw:minScore ${minScore}`;
 
     if (selector) {
       sparqlQuery += ` kw:selector "${selector.replace(/"/g, '\\"')}"`;
@@ -1665,6 +1916,40 @@ SELECT ?response ?score ?citationId ?citedText WHERE {
         ],
       };
     }
+  }
+
+  private async handleGenerateSparqlOnly(args: any) {
+    const { question, repository, includeComments = false } = args;
+    const repoName = repository || this.currentRepository;
+
+    if (!this.config.repositories[repoName]) {
+      throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    // This tool returns instructions for Claude to generate SPARQL without executing it
+    // The actual SPARQL generation happens in Claude's reasoning, not here
+    const instructions = `IMPORTANT: Generate ONLY the SPARQL query for this question. Do NOT execute it.
+
+Question: "${question}"
+Repository: ${repoName}
+
+Steps to follow:
+1. Read the SHACL schema: allegro://${repoName}/shacl
+2. Search the query library using search_queries or list_all_queries for similar patterns
+3. Read namespace prefixes: allegro://${repoName}/namespaces
+4. Generate the SPARQL query based on the schema and patterns found
+5. Return ONLY the SPARQL query text - no explanations, no execution, no results${includeComments ? '\n6. Include helpful comments in the query using # to explain each part' : ''}
+
+Output format: Return ONLY the SPARQL query as plain text, nothing else.`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: instructions,
+        },
+      ],
+    };
   }
 
   private async getRepositoryInfo(repoName: string) {
