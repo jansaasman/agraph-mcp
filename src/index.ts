@@ -596,6 +596,13 @@ class AllegroGraphMCPServer {
         mimeType: 'text/plain',
       });
 
+      resources.push({
+        uri: 'allegro://docs/visualization-guidelines',
+        name: 'Visualization Guidelines',
+        description: 'CRITICAL: Read this BEFORE creating any visualizations. Explains why you MUST use Chart.js (not React) for all charts. React components do not render in browsers. Chart.js works perfectly in Claude Desktop artifacts.',
+        mimeType: 'text/plain',
+      });
+
       for (const repoName of Object.keys(this.config.repositories)) {
         resources.push(
           {
@@ -835,6 +842,7 @@ If a query fails or returns unexpected results:
 | Unsure about URIs | \`list_all_queries\` |
 | Wikidata properties | \`list_all_queries\` |
 | Query succeeded | \`store_query\` (with permission) |
+| Creating visualization | Read \`allegro://docs/visualization-guidelines\` |
 
 ---
 
@@ -897,6 +905,36 @@ If a query fails or returns unexpected results:
         // Go up one level from dist/ to the project root
         const projectRoot = path.dirname(__dirname);
         const docPath = path.join(projectRoot, 'nearest-neighbor-and-askMyDocuments.txt');
+
+        try {
+          const content = await fs.readFile(docPath, 'utf-8');
+          return {
+            contents: [{
+              uri,
+              mimeType: 'text/plain',
+              text: content,
+            }],
+          };
+        } catch (error) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to read documentation from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
+          );
+        }
+      }
+
+      if (uri === 'allegro://docs/visualization-guidelines') {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const { fileURLToPath } = await import('url');
+
+        // Get the directory where the compiled JS file is located
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+
+        // Go up one level from dist/ to the project root
+        const projectRoot = path.dirname(__dirname);
+        const docPath = path.join(projectRoot, 'visualization-guidelines.txt');
 
         try {
           const content = await fs.readFile(docPath, 'utf-8');
@@ -1183,13 +1221,13 @@ If a query fails or returns unexpected results:
     let sparqlQuery = `
       PREFIX query: <http://franz.com/ns/query-library#>
       PREFIX dc: <http://purl.org/dc/terms/>
-      SELECT ?title ?description ?sparql ?repo ?created WHERE {
-        ?q a query:StoredQuery ;
+      SELECT ?queryUri ?title ?description ?sparql ?repo ?created WHERE {
+        ?queryUri a query:StoredQuery ;
            dc:title ?title ;
            dc:description ?description ;
            query:sparqlText ?sparql ;
            query:repository ?repo .
-        OPTIONAL { ?q dc:created ?created }
+        OPTIONAL { ?queryUri dc:created ?created }
         FILTER(
           CONTAINS(LCASE(?title), LCASE("${search}")) ||
           CONTAINS(LCASE(?description), LCASE("${search}"))
@@ -1244,6 +1282,7 @@ If a query fails or returns unexpected results:
     }
 
     const formattedResults = results.map((r: any) => ({
+      queryUri: r.queryUri.value,
       title: r.title.value,
       description: r.description.value,
       repository: r.repo.value,
@@ -1499,7 +1538,7 @@ viz:${vizId} a viz:Visualization ;
     const sparqlQuery = `
       PREFIX query: <http://franz.com/ns/query-library#>
       PREFIX dc: <http://purl.org/dc/terms/>
-      SELECT ?title ?description ?sparql ?repo ?created WHERE {
+      SELECT ?q ?title ?description ?sparql ?repo ?created WHERE {
         ?q a query:StoredQuery ;
            dc:title ?title ;
            dc:description ?description ;
@@ -1553,6 +1592,7 @@ viz:${vizId} a viz:Visualization ;
     }
 
     const formattedResults = results.map((r: any) => ({
+      queryUri: r.q.value,
       title: r.title.value,
       description: r.description.value,
       repository: r.repo.value,

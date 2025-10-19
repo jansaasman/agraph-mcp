@@ -1,0 +1,190 @@
+VISUALIZATION GUIDELINES FOR ALLEGROGRAPH QUERIES
+
+================================================================================
+⚠️  CRITICAL: ALWAYS USE CHART.JS, NOT REACT COMPONENTS
+================================================================================
+
+When creating visualizations for AllegroGraph query results, you MUST follow
+these guidelines:
+
+1. CHART LIBRARY REQUIREMENT
+
+   ✅ ALWAYS USE: Chart.js
+   ❌ NEVER USE: React components (React-Chartjs-2, Recharts, Victory, etc.)
+
+   WHY: React-based visualizations DO NOT render in browsers when saved as
+   HTML artifacts or opened as standalone files. Chart.js creates artifacts
+   that render beautifully in Claude Desktop AND work in any browser.
+
+2. SUPPORTED VISUALIZATION TYPES
+
+   Chart.js supports these types (use these):
+   - bar (bar_chart)
+   - line (line_chart)
+   - pie (pie_chart)
+   - scatter (scatter_plot)
+   - doughnut (variant of pie_chart)
+   - radar
+   - polarArea
+
+   Other supported types:
+   - table (plain HTML table)
+   - network_graph (use D3.js, NOT React)
+
+3. CHART.JS IMPLEMENTATION PATTERN
+
+   When creating a Chart.js visualization artifact, use this structure:
+
+   ```html
+   <!DOCTYPE html>
+   <html>
+   <head>
+       <title>Chart Title</title>
+       <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+   </head>
+   <body>
+       <canvas id="myChart"></canvas>
+       <script>
+           const ctx = document.getElementById('myChart');
+           new Chart(ctx, {
+               type: 'bar',  // or 'line', 'pie', 'scatter', etc.
+               data: {
+                   labels: ['Label 1', 'Label 2', 'Label 3'],
+                   datasets: [{
+                       label: 'Dataset Label',
+                       data: [12, 19, 3],
+                       backgroundColor: [
+                           'rgba(255, 99, 132, 0.8)',
+                           'rgba(54, 162, 235, 0.8)',
+                           'rgba(255, 206, 86, 0.8)'
+                       ]
+                   }]
+               },
+               options: {
+                   responsive: true,
+                   plugins: {
+                       title: {
+                           display: true,
+                           text: 'Chart Title'
+                       }
+                   }
+               }
+           });
+       </script>
+   </body>
+   </html>
+   ```
+
+4. STORING VISUALIZATIONS
+
+   When using the `store_query_visualization` tool:
+
+   - Set visualizationType appropriately (bar_chart, line_chart, pie_chart, etc.)
+   - Store the Chart.js configuration as JSON in visualizationConfig
+   - Include data, labels, and all Chart.js options
+   - Do NOT store React JSX or component code
+
+   Example visualizationConfig for Chart.js:
+   ```json
+   {
+     "type": "pie",
+     "data": {
+       "labels": ["USA", "China", "GB"],
+       "datasets": [{
+         "label": "Medal Count",
+         "data": [113, 88, 65],
+         "backgroundColor": [
+           "rgba(255, 99, 132, 0.8)",
+           "rgba(54, 162, 235, 0.8)",
+           "rgba(75, 192, 192, 0.8)"
+         ]
+       }]
+     },
+     "options": {
+       "responsive": true,
+       "plugins": {
+         "title": {"display": true, "text": "Olympic Medals by Country"}
+       }
+     }
+   }
+   ```
+
+5. WORKFLOW FOR CREATING VISUALIZATIONS
+
+   Step 1: Execute your SPARQL query and get results
+   Step 2: Analyze the results to determine best visualization type
+   Step 3: Create Chart.js artifact (HTML with embedded Chart.js code)
+   Step 4: Ask user if they want to store the visualization
+   Step 5: If yes, call store_query_visualization with Chart.js config
+
+   Example:
+   ```
+   User: "Show me a chart of medal counts by country"
+
+   You:
+   1. Execute SPARQL query to get medal data
+   2. Determine pie_chart is appropriate
+   3. Create Chart.js HTML artifact with the data
+   4. Display the chart in the artifact pane
+   5. Ask: "Would you like me to store this visualization?"
+   6. If yes, call store_query_visualization with Chart.js config
+   ```
+
+6. COMMON MISTAKES TO AVOID
+
+   ❌ DON'T: Use React component libraries (Recharts, Victory, react-chartjs-2)
+   ❌ DON'T: Import React, ReactDOM, or use JSX syntax
+   ❌ DON'T: Use npm packages that require build steps
+   ❌ DON'T: Create visualizations that need a development server
+   ❌ DON'T: Use modules or imports in the artifact
+
+   ✅ DO: Use Chart.js from CDN (https://cdn.jsdelivr.net/npm/chart.js)
+   ✅ DO: Create simple HTML with inline JavaScript
+   ✅ DO: Embed all data directly in the HTML
+   ✅ DO: Use the pattern shown in section 3 above
+
+7. TROUBLESHOOTING
+
+   If a visualization doesn't render:
+
+   Q: Did you use React?
+   A: Remove React, use Chart.js instead
+
+   Q: Did you use imports or modules?
+   A: Remove imports, load Chart.js from CDN with <script> tag
+
+   Q: Is the canvas element missing an id?
+   A: Add id="myChart" to the canvas element
+
+   Q: Did you forget to load Chart.js?
+   A: Add <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+8. CHART TYPE SELECTION GUIDE
+
+   Use BAR charts for:
+   - Comparing quantities across categories
+   - Showing rankings or counts
+
+   Use LINE charts for:
+   - Trends over time
+   - Continuous data series
+
+   Use PIE/DOUGHNUT charts for:
+   - Parts of a whole (percentages)
+   - Distribution across categories
+   - When you have 3-8 categories
+
+   Use SCATTER charts for:
+   - Correlations between two variables
+   - Showing relationships in data
+
+9. CHART.JS RESOURCES
+
+   Documentation: https://www.chartjs.org/docs/latest/
+   CDN: https://cdn.jsdelivr.net/npm/chart.js
+   Examples: https://www.chartjs.org/docs/latest/samples/
+
+================================================================================
+REMEMBER: Chart.js works perfectly in Claude Desktop artifacts!
+React components DO NOT work. Always use Chart.js for charts.
+================================================================================
