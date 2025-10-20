@@ -440,18 +440,27 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
     </div>
     <script>
         const ctx = document.getElementById('chart').getContext('2d');
-        const config = ${JSON.stringify(vizConfig)};
+
+        // Parse config and convert function strings to actual functions
+        const configStr = ${JSON.stringify(JSON.stringify(vizConfig))};
+        const config = JSON.parse(configStr, function(key, value) {
+            // Check if value is a string that looks like a function
+            if (typeof value === 'string' && value.startsWith('function(')) {
+                try {
+                    // Use eval to convert string to function (safe here since we control the source)
+                    return eval('(' + value + ')');
+                } catch (e) {
+                    console.warn('Failed to parse function:', value);
+                    return value;
+                }
+            }
+            return value;
+        });
 
         // Force responsive settings
         if (!config.options) config.options = {};
         config.options.responsive = true;
-        config.options.maintainAspectRatio = true;
-
-        // Override indexAxis if causing issues with bar charts
-        if (config.options.indexAxis === 'y' && config.data && config.data.labels && config.data.labels.length > 20) {
-            // Too many items for horizontal bar chart, switch to vertical
-            config.options.indexAxis = 'x';
-        }
+        config.options.maintainAspectRatio = false;
 
         new Chart(ctx, config);
     </script>
