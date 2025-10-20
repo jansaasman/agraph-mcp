@@ -433,7 +433,6 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
 </head>
 <body>
     <div class="container">
-        <h1>${description}</h1>
         <div class="chart-container">
             <canvas id="chart"></canvas>
         </div>
@@ -456,6 +455,19 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
             }
             return value;
         });
+
+        // Debug logging
+        console.log('Chart type:', config.type);
+        console.log('Number of datasets:', config.data?.datasets?.length);
+        if (config.data?.datasets?.[0]) {
+            console.log('First dataset:', config.data.datasets[0].label);
+            console.log('First dataset data points:', config.data.datasets[0].data?.length || 0);
+            if (config.data.datasets[0].data?.length > 0) {
+                console.log('Sample data point:', config.data.datasets[0].data[0]);
+            }
+        }
+        console.log('X-axis config:', config.options?.scales?.x);
+        console.log('Y-axis config:', config.options?.scales?.y);
 
         // Force responsive settings
         if (!config.options) config.options = {};
