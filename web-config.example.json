@@ -1,0 +1,9 @@
+{
+  "host": "localhost",
+  "port": "10035",
+  "username": "test",
+  "password": "xyzzy",
+  "catalog": "/",
+  "protocol": "http",
+  "webPort": 3000
+}

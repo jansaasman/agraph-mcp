@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AllegroGraph Query Browser</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 AllegroGraph Query Browser</h1>
+            <p>Browse stored queries and visualizations from the query library</p>
+        </header>
+
+        <div class="controls">
+            <div class="control-group">
+                <label for="repository-select">Repository:</label>
+                <select id="repository-select">
+                    <option value="">Loading repositories...</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label for="search-input">Search:</label>
+                <input type="text" id="search-input" placeholder="Search queries by title or description...">
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="queries-panel">
+                <h2>Queries</h2>
+                <div id="query-count" class="info-text">Select a repository to view queries</div>
+                <div id="queries-list" class="queries-list">
+                    <!-- Query cards will be inserted here -->
+                </div>
+            </div>
+
+            <div class="details-panel">
+                <div id="empty-state" class="empty-state">
+                    <p>Select a query to view details</p>
+                </div>
+                <div id="query-details" class="query-details" style="display: none;">
+                    <h2 id="query-title"></h2>
+                    <div class="metadata">
+                        <span id="query-repo" class="badge"></span>
+                        <span id="query-created" class="date"></span>
+                    </div>
+                    <div class="description-section">
+                        <h3>Description</h3>
+                        <p id="query-description"></p>
+                    </div>
+                    <div class="sparql-section">
+                        <h3>SPARQL Query</h3>
+                        <pre id="query-sparql"></pre>
+                    </div>
+                    <div id="visualizations-section" class="visualizations-section">
+                        <h3>Visualizations</h3>
+                        <div id="visualizations-list">
+                            <!-- Visualization cards will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Visualization Modal -->
+    <div id="viz-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Visualization</h2>
+                <button class="close-btn" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="modal-summary" class="summary-section"></div>
+                <iframe id="viz-frame" frameborder="0"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
