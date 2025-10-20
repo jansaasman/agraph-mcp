@@ -271,7 +271,7 @@ class AllegroGraphMCPServer {
           },
           {
             name: 'store_query_visualization',
-            description: 'Store a visualization configuration for a query in the library. Links the visualization to an existing stored query by finding its URI. This allows Claude to quickly recreate visualizations without regenerating them. Always ASK the user for confirmation before storing.',
+            description: 'Store a visualization configuration for a query in the library. Links the visualization to an existing stored query by finding its URI. This allows Claude to quickly recreate visualizations without regenerating them. IMPORTANT: The summary parameter should contain the markdown-formatted narrative text you showed to the user explaining what the visualization reveals (key insights, trends, statistics, data points). Always ASK the user for confirmation before storing.',
             inputSchema: {
               type: 'object',
               properties: {
@@ -292,12 +292,16 @@ class AllegroGraphMCPServer {
                   type: 'string',
                   description: 'Description of what the visualization shows and why it is useful',
                 },
+                summary: {
+                  type: 'string',
+                  description: 'Markdown-formatted narrative summary explaining what the visualization shows, key insights, trends, and important data points. This is the text you would normally show to the user when presenting the chart.',
+                },
                 repository: {
                   type: 'string',
                   description: 'Repository the query was run against',
                 },
               },
-              required: ['queryTitle', 'visualizationType', 'visualizationConfig', 'description', 'repository'],
+              required: ['queryTitle', 'visualizationType', 'visualizationConfig', 'description', 'summary', 'repository'],
             },
           },
           {
@@ -374,6 +378,14 @@ class AllegroGraphMCPServer {
           {
             name: 'read_vector_tutorial',
             description: 'CRITICAL: Read this FIRST before using vector_nearest_neighbor or vector_ask_documents tools. Returns the complete vector store tutorial with llm:nearestNeighbor and llm:askMyDocuments SPARQL examples, selector syntax for GraphRAG, and detailed Q&A about vector store operations.',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+          {
+            name: 'read_visualization_guidelines',
+            description: 'CRITICAL: Read this FIRST before creating ANY visualizations or charts. Returns complete guidelines explaining why you MUST use Chart.js (NOT React components) for all charts. React-based visualizations DO NOT render in browsers. Includes Chart.js implementation patterns, examples, and common mistakes to avoid.',
             inputSchema: {
               type: 'object',
               properties: {},
@@ -547,6 +559,8 @@ class AllegroGraphMCPServer {
             return await this.handleReadFtiTutorial();
           case 'read_vector_tutorial':
             return await this.handleReadVectorTutorial();
+          case 'read_visualization_guidelines':
+            return await this.handleReadVisualizationGuidelines();
           case 'vector_nearest_neighbor':
             return await this.handleVectorNearestNeighbor(args);
           case 'vector_ask_documents':
@@ -836,13 +850,13 @@ If a query fails or returns unexpected results:
 | Writing new query | \`search_queries\` |
 | Query failed | \`list_all_queries\` (CRITICAL) |
 | Text search needed | \`read_fti_tutorial\` |
-| Vector/RAG needed | Read \`allegro://docs/vector-store\` |
+| Vector/RAG needed | \`read_vector_tutorial\` |
 | Semantic search | \`vector_nearest_neighbor\` |
 | Question answering | \`vector_ask_documents\` |
 | Unsure about URIs | \`list_all_queries\` |
 | Wikidata properties | \`list_all_queries\` |
 | Query succeeded | \`store_query\` (with permission) |
-| Creating visualization | Read \`allegro://docs/visualization-guidelines\` |
+| Creating visualization | \`read_visualization_guidelines\` (CRITICAL) |
 
 ---
 
@@ -1359,7 +1373,7 @@ query:${queryId} a query:StoredQuery ;
   }
 
   private async handleStoreQueryVisualization(args: any) {
-    const { queryTitle, visualizationType, visualizationConfig, description, repository } = args;
+    const { queryTitle, visualizationType, visualizationConfig, description, summary, repository } = args;
 
     // Check if query-library repository exists
     const queryLibraryConfig = this.config.repositories['query-library'];
@@ -1426,6 +1440,7 @@ viz:${vizId} a viz:Visualization ;
     viz:type "${visualizationType}" ;
     viz:config """${visualizationConfig.replace(/"/g, '\\"')}""" ;
     dc:description """${description.replace(/"/g, '\\"')}""" ;
+    viz:summary """${summary.replace(/"/g, '\\"')}""" ;
     dc:created "${new Date().toISOString()}"^^xsd:dateTime .
 `;
 
@@ -1475,7 +1490,7 @@ viz:${vizId} a viz:Visualization ;
       PREFIX query: <http://franz.com/ns/query-library#>
       PREFIX dc: <http://purl.org/dc/terms/>
       PREFIX viz: <http://franz.com/ns/visualization#>
-      SELECT ?vizId ?type ?config ?description ?created WHERE {
+      SELECT ?vizId ?type ?config ?description ?summary ?created WHERE {
         ?queryUri a query:StoredQuery ;
                   dc:title """${queryTitle.replace(/"/g, '\\"')}""" `;
 
@@ -1491,6 +1506,7 @@ viz:${vizId} a viz:Visualization ;
                viz:config ?config ;
                dc:description ?description .
         OPTIONAL { ?vizId dc:created ?created }
+        OPTIONAL { ?vizId viz:summary ?summary }
       }
       ORDER BY DESC(?created)
     `;
@@ -1518,6 +1534,7 @@ viz:${vizId} a viz:Visualization ;
       type: r.type.value,
       config: r.config.value,
       description: r.description.value,
+      summary: r.summary?.value,
       created: r.created?.value
     }));
 
@@ -1728,6 +1745,37 @@ viz:${vizId} a viz:Visualization ;
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to read vector store tutorial from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+
+  private async handleReadVisualizationGuidelines() {
+    const fs = await import('fs/promises');
+    const path = await import('path');
+    const { fileURLToPath } = await import('url');
+
+    // Get the directory where the compiled JS file is located
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    // Go up one level from dist/ to the project root
+    const projectRoot = path.dirname(__dirname);
+    const docPath = path.join(projectRoot, 'visualization-guidelines.txt');
+
+    try {
+      const content = await fs.readFile(docPath, 'utf-8');
+      return {
+        content: [
+          {
+            type: 'text',
+            text: content,
+          },
+        ],
+      };
+    } catch (error) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to read visualization guidelines from ${docPath}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }

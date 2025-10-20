@@ -114,8 +114,9 @@ these guidelines:
    Step 1: Execute your SPARQL query and get results
    Step 2: Analyze the results to determine best visualization type
    Step 3: Create Chart.js artifact (HTML with embedded Chart.js code)
-   Step 4: Ask user if they want to store the visualization
-   Step 5: If yes, call store_query_visualization with Chart.js config
+   Step 4: Present the chart with a markdown summary explaining insights
+   Step 5: Ask user if they want to store the visualization
+   Step 6: If yes, call store_query_visualization with Chart.js config AND summary
 
    Example:
    ```
@@ -126,9 +127,16 @@ these guidelines:
    2. Determine pie_chart is appropriate
    3. Create Chart.js HTML artifact with the data
    4. Display the chart in the artifact pane
-   5. Ask: "Would you like me to store this visualization?"
-   6. If yes, call store_query_visualization with Chart.js config
+   5. Show summary: "The chart reveals that **USA** leads with 113 medals..."
+   6. Ask: "Would you like me to store this visualization?"
+   7. If yes, call store_query_visualization with:
+      - Chart.js config
+      - Summary (the markdown text from step 5)
    ```
+
+   IMPORTANT: Always include the summary parameter when storing visualizations.
+   The summary should be the markdown-formatted narrative text you showed to
+   the user explaining what the visualization reveals.
 
 6. COMMON MISTAKES TO AVOID
 
