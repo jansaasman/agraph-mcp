@@ -368,6 +368,14 @@ class AllegroGraphMCPServer {
             },
           },
           {
+            name: 'read_query_workflow',
+            description: 'CRITICAL: Read this FIRST when starting to work with AllegroGraph queries. Returns the complete SPARQL query workflow best practices including: when to read SHACL schemas, how to use the query library, step-by-step workflow, troubleshooting failed queries, and a quick reference table of which tool to use for each task. Essential for understanding the recommended approach.',
+            inputSchema: {
+              type: 'object',
+              properties: {},
+            },
+          },
+          {
             name: 'read_fti_tutorial',
             description: 'IMPORTANT: Read this FIRST when working with freetext indexing or text search. Returns the complete freetext indexing tutorial with SPARQL examples, syntax patterns, wildcards, performance tips, and REST API documentation. Essential for understanding how to use fti:match and fti:matchExpression correctly.',
             inputSchema: {
@@ -555,6 +563,8 @@ class AllegroGraphMCPServer {
             return await this.handleListFtiIndices(args);
           case 'get_fti_index_config':
             return await this.handleGetFtiIndexConfig(args);
+          case 'read_query_workflow':
+            return await this.handleReadQueryWorkflow();
           case 'read_fti_tutorial':
             return await this.handleReadFtiTutorial();
           case 'read_vector_tutorial':
@@ -1682,6 +1692,166 @@ viz:${vizId} a viz:Visualization ;
         {
           type: 'text',
           text: `Configuration for freetext index '${index}' in '${repoName}':\n${JSON.stringify(config, null, 2)}`,
+        },
+      ],
+    };
+  }
+
+  private async handleReadQueryWorkflow() {
+    // Return the same workflow document that's served as a resource
+    // This is embedded in the code rather than a separate file
+    const workflowDoc = `# SPARQL Query Workflow Best Practices
+
+## Overview
+This guide describes the recommended workflow for writing SPARQL queries against AllegroGraph repositories using this MCP server.
+
+---
+
+## 1. Understanding the Schema (ALWAYS START HERE)
+
+Before writing any SPARQL query, you MUST understand the data structure.
+
+### Step 1.1: Read the SHACL Schema
+- **Tool**: Read the resource \`allegro://<repository-name>/shacl\`
+- **Why**: SHACL shapes tell you:
+  - What classes exist (e.g., \`schema:Person\`, \`wdt:Q5\`)
+  - What predicates connect them (e.g., \`schema:birthDate\`, \`wdt:P19\`)
+  - Required vs optional properties
+  - Data types and constraints
+
+### Step 1.2: Check Namespace Prefixes
+- **Tool**: Read the resource \`allegro://<repository-name>/namespaces\`
+- **Why**: You need to know which prefixes are defined (e.g., \`wdt:\`, \`schema:\`, \`skos:\`)
+
+---
+
+## 2. Learning from Examples (CRITICAL STEP)
+
+**DO NOT write queries from scratch!** Instead, learn from working examples in the query library.
+
+### Step 2.1: Search for Similar Queries
+- **Tool**: \`search_queries\`
+- **Input**: Natural language description of what you want to query
+- **Why**: See if someone has already solved a similar problem
+
+### Step 2.2: List All Queries (When Stuck)
+- **Tool**: \`list_all_queries\`
+- **When**: Your query fails or you're unsure about URIs/predicates
+- **Why**:
+  - See ALL working patterns in the repository
+  - Learn how \`rdfs:label\` or \`skos:label\` reveal URI meanings
+  - Understand proper predicate usage
+  - Essential for Wikidata properties (like \`wdt:P19\`) where codes aren't self-explanatory
+
+---
+
+## 3. Text Search (If Needed)
+
+### Step 3.1: Read the Freetext Indexing Tutorial
+- **Tool**: \`read_fti_tutorial\`
+- **When**: You need to search text content (names, descriptions, etc.)
+- **Why**: AllegroGraph freetext indexing requires specific syntax (\`fti:match\`, \`fti:matchExpression\`)
+
+### Step 3.2: Check Available Indices
+- **Tool**: \`list_fti_indices\`
+- **Why**: See which predicates are indexed for text search
+
+### Step 3.3: Get Index Configuration
+- **Tool**: \`get_fti_index_config\`
+- **Why**: Understand indexing settings (case sensitivity, minimum word length, etc.)
+
+---
+
+## 4. Vector/Semantic Search (If Needed)
+
+### Step 4.1: Check Vector Store
+- **Tool**: \`check_vector_store\`
+- **Why**: Verify vector embeddings exist and get correct store name
+
+### Step 4.2: Read the Vector Store Tutorial (First Time)
+- **Tool**: Read resource \`allegro://docs/vector-store\`
+- **Why**: Understand \`llm:nearestNeighbor\` and \`llm:askMyDocuments\` syntax
+
+### Step 4.3: Use Vector Tools
+- **Tool**: \`vector_nearest_neighbor\` (semantic search) or \`vector_ask_documents\` (RAG)
+- **Why**: Find similar content or get LLM-powered answers
+
+---
+
+## 5. Writing Your Query
+
+### Step 5.1: Draft the Query
+- Use patterns from \`list_all_queries\` as templates
+- Include proper prefixes from namespace list
+- Use predicates from SHACL schema
+
+### Step 5.2: Execute the Query
+- **Tool**: \`sparql_query\`
+- **Tip**: Start simple, then add complexity
+
+### Step 5.3: If Query Fails
+🔴 **CRITICAL**: Don't guess! Go back to Step 2.2 (\`list_all_queries\`)
+
+---
+
+## 6. Storing Successful Queries
+
+### Step 6.1: Store the Query
+- **Tool**: \`store_query\`
+- **Input**:
+  - title: Short descriptive title
+  - description: Natural language explanation of what it does and why
+  - sparqlQuery: The SPARQL query text
+  - repository: Which repository it was tested on
+- **Why**: Help future users (including yourself) find this pattern
+
+---
+
+## 7. Troubleshooting Failed Queries
+
+If a query fails or returns unexpected results:
+
+1. ✅ **FIRST**: Use \`list_all_queries\` to see working patterns
+2. ✅ Check SHACL schema - did you use correct predicate URIs?
+3. ✅ Check namespaces - are your prefixes defined?
+4. ✅ Look at successful queries - how do they structure similar patterns?
+5. ✅ For text search - verify fti:match syntax from tutorial and examples
+
+**DO NOT** repeatedly guess and iterate without consulting the query library.
+
+---
+
+## Quick Reference
+
+| Task | First Tool to Use |
+|------|------------------|
+| Starting fresh | Read SHACL schema resource |
+| Writing new query | \`search_queries\` |
+| Query failed | \`list_all_queries\` (CRITICAL) |
+| Text search needed | \`read_fti_tutorial\` |
+| Vector/RAG needed | \`read_vector_tutorial\` |
+| Semantic search | \`vector_nearest_neighbor\` |
+| Question answering | \`vector_ask_documents\` |
+| Unsure about URIs | \`list_all_queries\` |
+| Wikidata properties | \`list_all_queries\` |
+| Query succeeded | \`store_query\` (with permission) |
+| Creating visualization | \`read_visualization_guidelines\` (CRITICAL) |
+
+---
+
+## Remember
+
+- 🔴 **Query library is your friend** - Use it liberally, especially \`list_all_queries\`
+- 🔴 **Don't guess** - Look at working examples instead
+- 🔴 **SHACL first** - Always understand the schema before querying
+- 🔴 **Store successes** - Help build the knowledge base
+`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: workflowDoc,
         },
       ],
     };
