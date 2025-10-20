@@ -470,8 +470,8 @@ class AllegroGraphMCPServer {
                 },
                 minScore: {
                   type: 'number',
-                  description: 'Minimum similarity score threshold (0.0-1.0, default: 0.8)',
-                  default: 0.8,
+                  description: 'Minimum similarity score threshold (range depends on embedding model, default: 0.2 works well for OpenAI text-embedding-3-small)',
+                  default: 0.2,
                 },
                 selector: {
                   type: 'string',
@@ -1038,9 +1038,19 @@ If a query fails or returns unexpected results:
   private async handleSparqlQuery(args: any) {
     const { query, repository, limit = 100, format = 'json' } = args;
     const repoName = repository || this.currentRepository;
-    
+
     if (!this.config.repositories[repoName]) {
       throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
+    }
+
+    // Debug logging for vector operations
+    const hasVectorOp = query.includes('llm:askMyDocuments') || query.includes('llm:nearestNeighbor');
+    if (hasVectorOp) {
+      console.error('[DEBUG] SPARQL Query with vector operation:');
+      console.error(`[DEBUG]   Repository: ${repoName}`);
+      console.error(`[DEBUG]   URL: ${this.getRepositoryUrl(repoName)}`);
+      console.error(`[DEBUG]   Query:\n${query}`);
+      console.error(`[DEBUG]   Limit: ${limit}`);
     }
 
     const url = this.getRepositoryUrl(repoName);
@@ -1058,6 +1068,13 @@ If a query fails or returns unexpected results:
       params,
       headers: { Accept: acceptHeader },
     });
+
+    // Debug logging for vector operation response
+    if (hasVectorOp) {
+      console.error('[DEBUG] SPARQL Response:');
+      console.error(`[DEBUG]   Status: ${response.status}`);
+      console.error(`[DEBUG]   Data: ${JSON.stringify(response.data, null, 2)}`);
+    }
 
     return {
       content: [
@@ -2053,7 +2070,7 @@ SELECT ?id ?score ?text `;
       vectorStore,
       repository,
       topN = 5,
-      minScore = 0.8,
+      minScore = 0.2,
       selector,
       useClustering = false
     } = args;
@@ -2067,6 +2084,15 @@ SELECT ?id ?score ?text `;
     // If vectorStore doesn't contain ':', prepend catalog:
     const config = this.config.repositories[repoName];
     const vectorStoreSpec = vectorStore.includes(':') ? vectorStore : `${config.catalog}:${vectorStore}`;
+
+    // Debug logging
+    console.error('[DEBUG] vector_ask_documents tool called:');
+    console.error(`[DEBUG]   Question: ${question}`);
+    console.error(`[DEBUG]   Vector Store (input): ${vectorStore}`);
+    console.error(`[DEBUG]   Vector Store (spec): ${vectorStoreSpec}`);
+    console.error(`[DEBUG]   Repository: ${repoName}`);
+    console.error(`[DEBUG]   Catalog: ${config.catalog}`);
+    console.error(`[DEBUG]   topN: ${topN}, minScore: ${minScore}`);
 
     // Build the SPARQL query using llm:askMyDocuments
     let sparqlQuery = `PREFIX llm: <http://franz.com/ns/allegrograph/8.0.0/llm/>
@@ -2086,12 +2112,20 @@ SELECT ?response ?score ?citationId ?citedText WHERE {
     sparqlQuery += `)
 }`;
 
+    console.error('[DEBUG] Generated SPARQL query:');
+    console.error(sparqlQuery);
+
     // Execute the query
     const url = this.getRepositoryUrl(repoName);
+    console.error(`[DEBUG] URL: ${url}`);
+
     const response = await this.axiosClients[repoName].get(url, {
       params: { query: sparqlQuery },
       headers: { Accept: 'application/sparql-results+json' },
     });
+
+    console.error('[DEBUG] Response status:', response.status);
+    console.error('[DEBUG] Response data:', JSON.stringify(response.data, null, 2));
 
     const results = response.data.results.bindings;
     if (results.length === 0) {
