@@ -386,9 +386,16 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
     const configValue = viz.config.value;
     const description = viz.description.value;
 
-    // Check if config is already HTML (legacy format)
-    if (configValue.trim().startsWith('<!DOCTYPE') || configValue.trim().startsWith('<html')) {
-      console.log('Config is HTML, rendering directly');
+    // Check if config is already HTML (legacy format or multi-chart dashboards)
+    const trimmedConfig = configValue.trim();
+    const isHTML = trimmedConfig.startsWith('<!DOCTYPE') ||
+                   trimmedConfig.startsWith('<html') ||
+                   trimmedConfig.startsWith('<HTML') ||
+                   trimmedConfig.match(/^<!--/) ||  // HTML comment
+                   (trimmedConfig.startsWith('<') && trimmedConfig.includes('<canvas'));  // Multi-chart dashboard
+
+    if (isHTML) {
+      console.log('Config is HTML (multi-chart or legacy), rendering directly');
       return res.send(configValue);
     }
 
@@ -475,6 +482,82 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
         config.options.maintainAspectRatio = false;
 
         new Chart(ctx, config);
+    </script>
+</body>
+</html>`;
+    } else if (type === 'other' && vizConfig.type === 'multi-chart') {
+      // Multi-chart dashboard
+      const charts = vizConfig.charts || [];
+
+      // Generate canvas elements for each chart
+      const canvasElements = charts.map((chart: any) =>
+        `<div class="chart-container">
+          <canvas id="${chart.chartId}"></canvas>
+        </div>`
+      ).join('\n        ');
+
+      // Generate Chart.js initialization code for each chart
+      const chartScripts = charts.map((chart: any) => {
+        const chartConfigJson = JSON.stringify(chart);
+        return `
+        {
+          const ctx = document.getElementById('${chart.chartId}').getContext('2d');
+          const chartConfig = ${chartConfigJson};
+
+          // Parse and convert function strings
+          const parsedConfig = JSON.parse(JSON.stringify(chartConfig), function(key, value) {
+            if (typeof value === 'string' && value.startsWith('function(')) {
+              try {
+                return eval('(' + value + ')');
+              } catch (e) {
+                console.warn('Failed to parse function:', value);
+                return value;
+              }
+            }
+            return value;
+          });
+
+          if (!parsedConfig.options) parsedConfig.options = {};
+          parsedConfig.options.responsive = true;
+          parsedConfig.options.maintainAspectRatio = false;
+
+          new Chart(ctx, parsedConfig);
+        }`;
+      }).join('\n');
+
+      html = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${description}</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .chart-container {
+            position: relative;
+            height: 400px;
+            width: 100%;
+            margin-bottom: 30px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        ${canvasElements}
+    </div>
+    <script>
+        ${chartScripts}
     </script>
 </body>
 </html>`;
