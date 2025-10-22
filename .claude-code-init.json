@@ -1,0 +1,22 @@
+{
+  "deployment": {
+    "windows": {
+      "wslPath": "/mnt/c/Users/jansa/agraph-mcp",
+      "windowsPath": "C:\\Users\\jansa\\agraph-mcp",
+      "description": "Windows deployment location for agraph-mcp"
+    }
+  },
+  "project": {
+    "name": "agraph-mcp",
+    "description": "AllegroGraph MCP Server with multi-repository support",
+    "sourceDir": "/home/test/agraph-mcp"
+  },
+  "deployment-instructions": {
+    "build": "npm run build",
+    "rsync-command": "rsync -av --delete --exclude 'node_modules' --exclude '.git' --exclude 'src' --exclude '*.test.ts' --exclude '*.test.js' --exclude '.gitignore' --exclude '*.md' --exclude 'jest.config.js' --exclude '*.log' --exclude '.DS_Store' --exclude 'web-config.json' --exclude '#*#' --exclude '*~' /home/test/agraph-mcp/ /mnt/c/Users/jansa/agraph-mcp/",
+    "post-deploy": "cd /mnt/c/Users/jansa/agraph-mcp && npm install --production",
+    "why-exclude-node_modules": "node_modules contains Linux-compiled binaries that won't work on Windows. Must run npm install on Windows after deployment.",
+    "why-exclude-src": "Only compiled dist/ code is needed for production. Source TypeScript files are not required to run the server.",
+    "why-exclude-git": ".git directory is large and not needed for deployment. Only production files should be deployed."
+  }
+}

@@ -522,6 +522,41 @@ class AllegroGraphMCPServer {
               required: ['question'],
             },
           },
+          {
+            name: 'delete_query',
+            description: 'Delete a stored query from the query library by URI or title. Automatically deletes all visualizations attached to the query. If deleting by title and multiple queries match, returns an error with the matching URIs.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                queryUri: {
+                  type: 'string',
+                  description: 'URI of the query to delete (e.g., "http://franz.com/ns/query-library#query-1234567890")',
+                },
+                queryTitle: {
+                  type: 'string',
+                  description: 'Title of the query to delete (alternative to queryUri)',
+                },
+                repository: {
+                  type: 'string',
+                  description: 'Repository name to filter by (optional, recommended when using queryTitle)',
+                },
+              },
+            },
+          },
+          {
+            name: 'delete_visualization',
+            description: 'Delete a specific visualization by its URI without deleting the associated query. Use this when you want to remove an outdated or incorrect visualization while keeping the query.',
+            inputSchema: {
+              type: 'object',
+              properties: {
+                visualizationUri: {
+                  type: 'string',
+                  description: 'URI of the visualization to delete (e.g., "http://franz.com/ns/visualization#viz-1234567890")',
+                },
+              },
+              required: ['visualizationUri'],
+            },
+          },
         ],
       };
     });
@@ -579,6 +614,10 @@ class AllegroGraphMCPServer {
             return await this.handleCheckVectorStore(args);
           case 'generate_sparql_only':
             return await this.handleGenerateSparqlOnly(args);
+          case 'delete_query':
+            return await this.handleDeleteQuery(args);
+          case 'delete_visualization':
+            return await this.handleDeleteVisualization(args);
           default:
             throw new McpError(ErrorCode.MethodNotFound, `Unknown tool: ${name}`);
         }
@@ -2239,6 +2278,217 @@ Output format: Return ONLY the SPARQL query as plain text, nothing else.`;
         {
           type: 'text',
           text: instructions,
+        },
+      ],
+    };
+  }
+
+  private async handleDeleteQuery(args: any) {
+    const { queryUri, queryTitle, repository } = args;
+
+    // Must provide either queryUri or queryTitle
+    if (!queryUri && !queryTitle) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        'Must provide either queryUri or queryTitle parameter'
+      );
+    }
+
+    // Check if query-library repository exists
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found.');
+    }
+
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+    }
+
+    let targetQueryUri = queryUri;
+
+    // If queryTitle provided, find the query URI(s)
+    if (queryTitle) {
+      let findQuerySparql = `
+        PREFIX query: <http://franz.com/ns/query-library#>
+        PREFIX dc: <http://purl.org/dc/terms/>
+        SELECT ?queryUri WHERE {
+          ?queryUri a query:StoredQuery ;
+                    dc:title """${queryTitle.replace(/"/g, '\\"')}""" `;
+
+      if (repository) {
+        findQuerySparql += `;
+                    query:repository "${repository}" `;
+      }
+
+      findQuerySparql += `.
+        }
+      `;
+
+      const url = this.getRepositoryUrl('query-library');
+      const findResponse = await this.axiosClients['query-library'].get(url, {
+        params: { query: findQuerySparql },
+        headers: { Accept: 'application/sparql-results+json' },
+      });
+
+      const results = findResponse.data.results.bindings;
+
+      if (results.length === 0) {
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `No stored query found with title "${queryTitle}"${repository ? ` in repository "${repository}"` : ''}`
+        );
+      }
+
+      if (results.length > 1) {
+        const uris = results.map((r: any) => r.queryUri.value);
+        throw new McpError(
+          ErrorCode.InvalidRequest,
+          `Multiple queries found with title "${queryTitle}". Please delete by URI instead. Found URIs:\n${uris.join('\n')}`
+        );
+      }
+
+      targetQueryUri = results[0].queryUri.value;
+    }
+
+    // Step 1: Find all visualizations linked to this query
+    const findVizSparql = `
+      PREFIX viz: <http://franz.com/ns/visualization#>
+      SELECT ?vizUri WHERE {
+        ?vizUri a viz:Visualization ;
+                viz:forQuery <${targetQueryUri}> .
+      }
+    `;
+
+    const url = this.getRepositoryUrl('query-library');
+    const vizResponse = await this.axiosClients['query-library'].get(url, {
+      params: { query: findVizSparql },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    const vizResults = vizResponse.data.results.bindings;
+    const vizUris = vizResults.map((r: any) => r.vizUri.value);
+
+    // Step 2: Delete all visualizations
+    let deletedVizCount = 0;
+    for (const vizUri of vizUris) {
+      const deleteVizSparql = `
+        PREFIX viz: <http://franz.com/ns/visualization#>
+        DELETE WHERE {
+          <${vizUri}> ?p ?o .
+        }
+      `;
+
+      const statementsUrl = `${this.getRepositoryUrl('query-library')}`;
+      await this.axiosClients['query-library'].post(statementsUrl, null, {
+        params: { update: deleteVizSparql },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
+      deletedVizCount++;
+    }
+
+    // Step 3: Delete the query
+    const deleteQuerySparql = `
+      PREFIX query: <http://franz.com/ns/query-library#>
+      DELETE WHERE {
+        <${targetQueryUri}> ?p ?o .
+      }
+    `;
+
+    const statementsUrl = `${this.getRepositoryUrl('query-library')}`;
+    await this.axiosClients['query-library'].post(statementsUrl, null, {
+      params: { update: deleteQuerySparql },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Successfully deleted query: ${targetQueryUri}\nDeleted ${deletedVizCount} associated visualization(s).`,
+        },
+      ],
+    };
+  }
+
+  private async handleDeleteVisualization(args: any) {
+    const { visualizationUri } = args;
+
+    // Check if query-library repository exists
+    const queryLibraryConfig = this.config.repositories['query-library'];
+    if (!queryLibraryConfig) {
+      throw new McpError(ErrorCode.InvalidRequest, 'Query library repository not found.');
+    }
+
+    // Ensure axios client exists for query-library
+    if (!this.axiosClients['query-library']) {
+      const baseUrl = `${queryLibraryConfig.protocol || 'https'}://${queryLibraryConfig.host}:${queryLibraryConfig.port}`;
+      this.axiosClients['query-library'] = axios.create({
+        baseURL: baseUrl,
+        auth: {
+          username: queryLibraryConfig.username,
+          password: queryLibraryConfig.password,
+        },
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        timeout: 10000,
+      });
+    }
+
+    // Check if visualization exists
+    const checkVizSparql = `
+      PREFIX viz: <http://franz.com/ns/visualization#>
+      ASK {
+        <${visualizationUri}> a viz:Visualization .
+      }
+    `;
+
+    const url = this.getRepositoryUrl('query-library');
+    const checkResponse = await this.axiosClients['query-library'].get(url, {
+      params: { query: checkVizSparql },
+      headers: { Accept: 'application/sparql-results+json' },
+    });
+
+    if (!checkResponse.data.boolean) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Visualization not found: ${visualizationUri}`
+      );
+    }
+
+    // Delete the visualization
+    const deleteVizSparql = `
+      PREFIX viz: <http://franz.com/ns/visualization#>
+      DELETE WHERE {
+        <${visualizationUri}> ?p ?o .
+      }
+    `;
+
+    const statementsUrl = `${this.getRepositoryUrl('query-library')}`;
+    await this.axiosClients['query-library'].post(statementsUrl, null, {
+      params: { update: deleteVizSparql },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Successfully deleted visualization: ${visualizationUri}`,
         },
       ],
     };
