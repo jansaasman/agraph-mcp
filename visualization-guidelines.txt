@@ -79,6 +79,8 @@ these guidelines:
 
    When using the `store_query_visualization` tool:
 
+   A. FOR CHART.JS VISUALIZATIONS (bar, line, pie, scatter):
+
    - Set visualizationType appropriately (bar_chart, line_chart, pie_chart, etc.)
    - Store the Chart.js configuration as JSON in visualizationConfig
    - Include data, labels, and all Chart.js options
@@ -108,6 +110,86 @@ these guidelines:
      }
    }
    ```
+
+   B. FOR D3/NETWORK GRAPHS AND HTML VISUALIZATIONS:
+
+   ⚠️ CRITICAL: Store the COMPLETE standalone HTML, not just configuration!
+
+   When storing D3.js network graphs or other HTML-based visualizations:
+
+   ✅ MUST INCLUDE:
+   - Complete standalone HTML (<!DOCTYPE html>...</html>)
+   - All nodes and links arrays with actual data embedded
+   - All D3.js/visualization code
+   - Descriptive text sections (intro paragraph, interpretation/insights)
+   - All styling and scripts
+
+   ❌ DO NOT:
+   - Store just the configuration/schema without actual data
+   - Store partial HTML or incomplete code
+   - Omit the data arrays (nodes, links, etc.)
+   - Leave out explanatory text sections
+
+   REQUIRED SECTIONS in HTML visualizations:
+   1. Title (h1)
+   2. Description paragraph explaining what the visualization shows
+   3. The actual visualization (SVG, canvas, etc.)
+   4. Interpretation/insights section at the bottom explaining findings
+
+   FONT SIZE: Use reasonable sizes (14-16px for body text, not 24-28px)
+
+   Example structure for network graph HTML:
+   ```html
+   <!DOCTYPE html>
+   <html>
+   <head>
+       <title>Product Affinity Network</title>
+       <script src="https://d3js.org/d3.v7.min.js"></script>
+       <style>
+           body { font-family: Arial; font-size: 14px; }
+           h1 { font-size: 16px; }
+           .description { margin: 20px 0; }
+           .insights { margin: 20px 0; padding: 15px; background: #f5f5f5; }
+       </style>
+   </head>
+   <body>
+       <h1>Product Affinity Network</h1>
+       <p class="description">
+           This interactive network shows product co-purchase patterns...
+           [Full description here]
+       </p>
+       <div id="network"></div>
+       <div class="insights">
+           <h2>Key Insights:</h2>
+           <ul>
+               <li>Most connected products: ...</li>
+               <li>Category clustering: ...</li>
+               [All insights here]
+           </ul>
+       </div>
+       <script>
+           // All D3 code with embedded data
+           const nodes = [
+               {id: "Product1", category: "Beverages", connections: 5},
+               {id: "Product2", category: "Dairy", connections: 8},
+               // ... ALL nodes here
+           ];
+           const links = [
+               {source: "Product1", target: "Product2", weight: 5},
+               // ... ALL links here
+           ];
+
+           // D3 visualization code...
+       </script>
+   </body>
+   </html>
+   ```
+
+   WHY THIS MATTERS:
+   - The web query browser renders stored HTML directly
+   - Missing data means blank/broken visualizations
+   - Missing text means lost context and insights
+   - Incomplete HTML causes rendering errors
 
 5. WORKFLOW FOR CREATING VISUALIZATIONS
 
