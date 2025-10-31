@@ -248,16 +248,27 @@ function showVisualization(viz) {
     const summary = document.getElementById('modal-summary');
     const frame = document.getElementById('viz-frame');
 
-    title.textContent = viz.description;
+    // For HTML-based visualizations (D3, network graphs, etc.), hide title/summary
+    // since they're self-contained. Only show for Chart.js visualizations.
+    const isChartJs = ['bar_chart', 'line_chart', 'pie_chart', 'scatter_plot', 'bar', 'line', 'pie', 'scatter'].includes(viz.type);
 
-    if (viz.summary) {
-        summary.style.display = 'block';
-        // Convert markdown to HTML (simple version)
-        const htmlSummary = viz.summary
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/\n/g, '<br>');
-        summary.innerHTML = htmlSummary;
+    if (isChartJs) {
+        title.textContent = viz.description;
+        title.style.display = 'block';
+
+        if (viz.summary) {
+            summary.style.display = 'block';
+            // Convert markdown to HTML (simple version)
+            const htmlSummary = viz.summary
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br>');
+            summary.innerHTML = htmlSummary;
+        } else {
+            summary.style.display = 'none';
+        }
     } else {
+        // HTML-based visualization - hide modal header
+        title.style.display = 'none';
         summary.style.display = 'none';
     }
 

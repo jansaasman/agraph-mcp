@@ -485,6 +485,161 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
     </script>
 </body>
 </html>`;
+    } else if (type === 'network_graph' || (type === 'other' && vizConfig.type === 'd3-force-network')) {
+      // D3 force-directed network graph
+      html = `<!DOCTYPE html>
+<html>
+<head>
+    <title>${description}</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin-top: 0;
+            color: #333;
+        }
+        .description {
+            color: #666;
+            margin-bottom: 20px;
+        }
+        #network {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .tooltip {
+            position: absolute;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            border-radius: 4px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            font-size: 12px;
+            max-width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>${description}</h1>
+        <div id="network"></div>
+    </div>
+    <div class="tooltip" id="tooltip"></div>
+    <script>
+        const config = ${JSON.stringify(vizConfig)};
+
+        // Extract configuration
+        const width = window.innerWidth - 80;
+        const height = 600;
+
+        // Create SVG
+        const svg = d3.select("#network")
+            .append("svg")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Create tooltip
+        const tooltip = d3.select("#tooltip");
+
+        // Create force simulation
+        const simulation = d3.forceSimulation(config.nodes)
+            .force("link", d3.forceLink(config.links).id(d => d.id))
+            .force("charge", d3.forceManyBody().strength(-200))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        // Create links
+        const link = svg.append("g")
+            .selectAll("line")
+            .data(config.links)
+            .enter().append("line")
+            .attr("stroke", "#999")
+            .attr("stroke-opacity", 0.6)
+            .attr("stroke-width", d => Math.sqrt(d.value || 1));
+
+        // Create nodes
+        const node = svg.append("g")
+            .selectAll("circle")
+            .data(config.nodes)
+            .enter().append("circle")
+            .attr("r", d => d.size || 5)
+            .attr("fill", d => d.color || "#69b3a2")
+            .call(d3.drag()
+                .on("start", dragstarted)
+                .on("drag", dragged)
+                .on("end", dragended));
+
+        // Add labels
+        const labels = svg.append("g")
+            .selectAll("text")
+            .data(config.nodes)
+            .enter().append("text")
+            .text(d => d.label || d.id)
+            .attr("font-size", 10)
+            .attr("dx", 12)
+            .attr("dy", 4);
+
+        // Add hover tooltips
+        node.on("mouseover", function(event, d) {
+                tooltip.style("opacity", 1)
+                    .html(\`<strong>\${d.label || d.id}</strong><br/>\${d.description || ''}\`)
+                    .style("left", (event.pageX + 10) + "px")
+                    .style("top", (event.pageY - 28) + "px");
+            })
+            .on("mouseout", function() {
+                tooltip.style("opacity", 0);
+            });
+
+        // Update positions on simulation tick
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("cx", d => d.x)
+                .attr("cy", d => d.y);
+
+            labels
+                .attr("x", d => d.x)
+                .attr("y", d => d.y);
+        });
+
+        // Drag functions
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+    </script>
+</body>
+</html>`;
     } else if (type === 'other' && vizConfig.type === 'multi-chart') {
       // Multi-chart dashboard
       const charts = vizConfig.charts || [];
