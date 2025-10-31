@@ -386,25 +386,70 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
     const configValue = viz.config.value;
     const description = viz.description.value;
 
-    // Check if config is already HTML (legacy format or multi-chart dashboards)
-    const trimmedConfig = configValue.trim();
-    const isHTML = trimmedConfig.startsWith('<!DOCTYPE') ||
-                   trimmedConfig.startsWith('<html') ||
-                   trimmedConfig.startsWith('<HTML') ||
-                   trimmedConfig.match(/^<!--/) ||  // HTML comment
-                   (trimmedConfig.startsWith('<') && trimmedConfig.includes('<canvas'));  // Multi-chart dashboard
+    console.log('=== Rendering Visualization ===');
+    console.log('Type:', type);
+    console.log('Config length:', configValue.length);
+    console.log('Config start:', configValue.substring(0, 200));
 
-    if (isHTML) {
-      console.log('Config is HTML (multi-chart or legacy), rendering directly');
-      return res.send(configValue);
+    // Check if config is already HTML (legacy format, multi-chart dashboards, or D3 network graphs)
+    const trimmedConfig = configValue.trim();
+    const looksLikeHTML = trimmedConfig.startsWith('<!DOCTYPE') ||
+                          trimmedConfig.startsWith('<html') ||
+                          trimmedConfig.startsWith('<HTML') ||
+                          trimmedConfig.match(/^<!--/) ||  // HTML comment
+                          trimmedConfig.includes('</html>') ||  // Has closing html tag
+                          trimmedConfig.includes('</body>') ||  // Has closing body tag
+                          (trimmedConfig.startsWith('<') && (
+                            trimmedConfig.includes('<canvas') ||  // Multi-chart dashboard
+                            trimmedConfig.includes('<svg') ||     // D3 visualizations
+                            trimmedConfig.includes('d3.select') ||   // D3 code
+                            trimmedConfig.includes('<script')    // Has script tags
+                          ));
+
+    console.log('Looks like HTML?', looksLikeHTML);
+
+    if (looksLikeHTML) {
+      console.log('✓ Config is HTML (rendering directly)');
+
+      // Check if HTML appears complete
+      const hasClosingHtml = configValue.includes('</html>');
+      const hasClosingBody = configValue.includes('</body>');
+      console.log('Has closing </html> tag?', hasClosingHtml);
+      console.log('Has closing </body> tag?', hasClosingBody);
+
+      if (!hasClosingHtml || !hasClosingBody) {
+        console.log('⚠️ WARNING: HTML appears incomplete/truncated!');
+      }
+
+      // Fix font size if it's too large
+      let htmlContent = configValue;
+      if (htmlContent.includes('font-size: 28px') || htmlContent.includes('font-size:28px')) {
+        htmlContent = htmlContent.replace(/font-size:\s*28px/g, 'font-size: 16px');
+      }
+      if (htmlContent.includes('font-size: 24px') || htmlContent.includes('font-size:24px')) {
+        htmlContent = htmlContent.replace(/font-size:\s*24px/g, 'font-size: 14px');
+      }
+
+      console.log('HTML config last 200 chars:', configValue.substring(configValue.length - 200));
+
+      return res.send(htmlContent);
     }
 
     // Parse config as JSON for Chart.js
     let vizConfig;
     try {
+      console.log('Attempting to parse config as JSON...');
       vizConfig = JSON.parse(configValue);
+      console.log('✓ Successfully parsed as JSON');
     } catch (e) {
-      return res.status(400).send(`Invalid visualization config: not valid JSON or HTML`);
+      console.log('✗ JSON parse failed:', (e as Error).message);
+      // If it's not valid JSON and not detected as HTML, but contains HTML-like content, try sending as-is
+      if (configValue.includes('<') && configValue.includes('>')) {
+        console.log('Config contains HTML tags but wasn\'t detected initially, sending as HTML');
+        return res.send(configValue);
+      }
+      console.log('✗ Returning 400 error - not valid JSON or HTML');
+      return res.status(400).send(`Invalid visualization config: not valid JSON or HTML. Error: ${(e as Error).message}`);
     }
 
     // Generate HTML based on type
@@ -487,6 +532,23 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
 </html>`;
     } else if (type === 'network_graph' || (type === 'other' && vizConfig.type === 'd3-force-network')) {
       // D3 force-directed network graph
+      console.log('Rendering D3 network graph, config keys:', Object.keys(vizConfig));
+
+      // Safety check: if vizConfig is a string, it's HTML
+      if (typeof vizConfig === 'string') {
+        console.log('Network graph config is a string (HTML), sending directly');
+        if (vizConfig.includes('<')) {
+          return res.send(vizConfig);
+        }
+        return res.status(400).send('Invalid network graph configuration: config is string but not HTML');
+      }
+
+      // Check if nodes/links exist - log warning but continue
+      if (!vizConfig.nodes || !vizConfig.links) {
+        console.log('⚠️ WARNING: Config missing nodes or links arrays');
+        console.log('Full config:', JSON.stringify(vizConfig, null, 2).substring(0, 500));
+      }
+
       html = `<!DOCTYPE html>
 <html>
 <head>
@@ -507,11 +569,15 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
         }
         h1 {
             margin-top: 0;
+            font-size: 16px;
             color: #333;
         }
-        .description {
-            color: #666;
-            margin-bottom: 20px;
+        .error {
+            color: red;
+            padding: 20px;
+            background: #fee;
+            border-radius: 4px;
+            margin: 20px 0;
         }
         #network {
             width: 100%;
@@ -536,106 +602,125 @@ app.get('/api/visualizations/:vizUri/render', async (req, res) => {
 <body>
     <div class="container">
         <h1>${description}</h1>
+        <div id="error"></div>
         <div id="network"></div>
     </div>
     <div class="tooltip" id="tooltip"></div>
     <script>
-        const config = ${JSON.stringify(vizConfig)};
+        try {
+            const config = ${JSON.stringify(vizConfig)};
+            console.log('Network graph config:', config);
 
-        // Extract configuration
-        const width = window.innerWidth - 80;
-        const height = 600;
+            // Validate config
+            if (!config.nodes || !Array.isArray(config.nodes)) {
+                throw new Error('Invalid config: nodes array is missing or invalid');
+            }
+            if (!config.links || !Array.isArray(config.links)) {
+                throw new Error('Invalid config: links array is missing or invalid');
+            }
 
-        // Create SVG
-        const svg = d3.select("#network")
-            .append("svg")
-            .attr("width", width)
-            .attr("height", height);
+            console.log('Nodes:', config.nodes.length, 'Links:', config.links.length);
 
-        // Create tooltip
-        const tooltip = d3.select("#tooltip");
+            // Extract configuration
+            const width = window.innerWidth - 80;
+            const height = 600;
 
-        // Create force simulation
-        const simulation = d3.forceSimulation(config.nodes)
-            .force("link", d3.forceLink(config.links).id(d => d.id))
-            .force("charge", d3.forceManyBody().strength(-200))
-            .force("center", d3.forceCenter(width / 2, height / 2));
+            // Create SVG
+            const svg = d3.select("#network")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
 
-        // Create links
-        const link = svg.append("g")
-            .selectAll("line")
-            .data(config.links)
-            .enter().append("line")
-            .attr("stroke", "#999")
-            .attr("stroke-opacity", 0.6)
-            .attr("stroke-width", d => Math.sqrt(d.value || 1));
+            // Create tooltip
+            const tooltip = d3.select("#tooltip");
 
-        // Create nodes
-        const node = svg.append("g")
-            .selectAll("circle")
-            .data(config.nodes)
-            .enter().append("circle")
-            .attr("r", d => d.size || 5)
-            .attr("fill", d => d.color || "#69b3a2")
-            .call(d3.drag()
-                .on("start", dragstarted)
-                .on("drag", dragged)
-                .on("end", dragended));
+            // Create force simulation
+            const simulation = d3.forceSimulation(config.nodes)
+                .force("link", d3.forceLink(config.links).id(d => d.id))
+                .force("charge", d3.forceManyBody().strength(-200))
+                .force("center", d3.forceCenter(width / 2, height / 2));
 
-        // Add labels
-        const labels = svg.append("g")
-            .selectAll("text")
-            .data(config.nodes)
-            .enter().append("text")
-            .text(d => d.label || d.id)
-            .attr("font-size", 10)
-            .attr("dx", 12)
-            .attr("dy", 4);
+            // Create links
+            const link = svg.append("g")
+                .selectAll("line")
+                .data(config.links)
+                .enter().append("line")
+                .attr("stroke", "#999")
+                .attr("stroke-opacity", 0.6)
+                .attr("stroke-width", d => Math.sqrt(d.value || 1));
 
-        // Add hover tooltips
-        node.on("mouseover", function(event, d) {
-                tooltip.style("opacity", 1)
-                    .html(\`<strong>\${d.label || d.id}</strong><br/>\${d.description || ''}\`)
-                    .style("left", (event.pageX + 10) + "px")
-                    .style("top", (event.pageY - 28) + "px");
-            })
-            .on("mouseout", function() {
-                tooltip.style("opacity", 0);
+            // Create nodes
+            const node = svg.append("g")
+                .selectAll("circle")
+                .data(config.nodes)
+                .enter().append("circle")
+                .attr("r", d => d.size || 5)
+                .attr("fill", d => d.color || "#69b3a2")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended));
+
+            // Add labels
+            const labels = svg.append("g")
+                .selectAll("text")
+                .data(config.nodes)
+                .enter().append("text")
+                .text(d => d.label || d.id)
+                .attr("font-size", 10)
+                .attr("dx", 12)
+                .attr("dy", 4);
+
+            // Add hover tooltips
+            node.on("mouseover", function(event, d) {
+                    tooltip.style("opacity", 1)
+                        .html(\`<strong>\${d.label || d.id}</strong><br/>\${d.description || ''}\`)
+                        .style("left", (event.pageX + 10) + "px")
+                        .style("top", (event.pageY - 28) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.style("opacity", 0);
+                });
+
+            // Update positions on simulation tick
+            simulation.on("tick", () => {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node
+                    .attr("cx", d => d.x)
+                    .attr("cy", d => d.y);
+
+                labels
+                    .attr("x", d => d.x)
+                    .attr("y", d => d.y);
             });
 
-        // Update positions on simulation tick
-        simulation.on("tick", () => {
-            link
-                .attr("x1", d => d.source.x)
-                .attr("y1", d => d.source.y)
-                .attr("x2", d => d.target.x)
-                .attr("y2", d => d.target.y);
+            // Drag functions
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
 
-            node
-                .attr("cx", d => d.x)
-                .attr("cy", d => d.y);
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
 
-            labels
-                .attr("x", d => d.x)
-                .attr("y", d => d.y);
-        });
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
 
-        // Drag functions
-        function dragstarted(event, d) {
-            if (!event.active) simulation.alphaTarget(0.3).restart();
-            d.fx = d.x;
-            d.fy = d.y;
-        }
-
-        function dragged(event, d) {
-            d.fx = event.x;
-            d.fy = event.y;
-        }
-
-        function dragended(event, d) {
-            if (!event.active) simulation.alphaTarget(0);
-            d.fx = null;
-            d.fy = null;
+            console.log('Network graph initialized successfully');
+        } catch (error) {
+            console.error('Error rendering network graph:', error);
+            document.getElementById('error').innerHTML = '<div class="error"><strong>Error:</strong> ' + error.message + '</div>';
         }
     </script>
 </body>
