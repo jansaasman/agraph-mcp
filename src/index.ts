@@ -11,6 +11,12 @@ import {
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import axios, { AxiosInstance } from 'axios';
+import {
+  compressShaclForSparql,
+  readShaclCache,
+  writeShaclCache,
+  CompressedShacl
+} from './shacl-compression.js';
 
 interface RepositoryConfig {
   host: string;
@@ -214,13 +220,19 @@ class AllegroGraphMCPServer {
           },
           {
             name: 'get_shacl',
-            description: 'IMPORTANT: Call this FIRST before writing SPARQL queries. Returns SHACL shapes that describe all available classes, predicates, and their constraints in the repository. This eliminates guessing and prevents errors by providing the exact schema.',
+            description: 'IMPORTANT: Call this FIRST before writing SPARQL queries. Returns SHACL shapes that describe all available classes, predicates, and their constraints in the repository. This eliminates guessing and prevents errors by providing the exact schema. By default returns a compressed format optimized for token efficiency (60-70% smaller).',
             inputSchema: {
               type: 'object',
               properties: {
                 repository: {
                   type: 'string',
                   description: 'Repository name (optional, uses current if not specified)',
+                },
+                format: {
+                  type: 'string',
+                  enum: ['compressed', 'full'],
+                  description: 'Output format: "compressed" (default) returns optimized format with prefixes and classes only; "full" returns raw SHACL JSON-LD',
+                  default: 'compressed',
                 },
               },
             },
@@ -1271,24 +1283,75 @@ If a query fails or returns unexpected results:
   }
 
   private async handleGetShacl(args: any) {
-    const { repository } = args;
+    const { repository, format = 'compressed' } = args;
     const repoName = repository || this.currentRepository;
 
     if (!this.config.repositories[repoName]) {
       throw new McpError(ErrorCode.InvalidRequest, `Repository '${repoName}' not found`);
     }
 
-    const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
+    const config = this.config.repositories[repoName];
+    const catalog = config.catalog;
 
+    // For 'full' format, return raw SHACL without compression
+    if (format === 'full') {
+      const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
+      const response = await this.axiosClients[repoName].get(url, {
+        headers: { 'Accept': 'application/json' },
+      });
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `SHACL shapes from '${repoName}' (full format):\n${JSON.stringify(response.data, null, 2)}`,
+          },
+        ],
+      };
+    }
+
+    // For 'compressed' format (default), use compression and caching
+    // Get repository size for cache invalidation
+    const sizeUrl = `${this.getRepositoryUrl(repoName)}/size`;
+    const sizeResponse = await this.axiosClients[repoName].get(sizeUrl);
+    const repoSize = parseInt(sizeResponse.data, 10);
+
+    // Try to read from cache first
+    const cached = readShaclCache(catalog, repoName, repoSize);
+    if (cached) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `Compressed SHACL schema from '${repoName}' (cached):\n${JSON.stringify(cached, null, 2)}`,
+          },
+        ],
+      };
+    }
+
+    // Cache miss - fetch and compress
+    console.error(`Generating compressed SHACL for ${catalog}:${repoName}...`);
+    const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
     const response = await this.axiosClients[repoName].get(url, {
       headers: { 'Accept': 'application/json' },
     });
+
+    // Compress the SHACL
+    const compressed = compressShaclForSparql(response.data);
+
+    // Write to cache for next time
+    writeShaclCache(catalog, repoName, repoSize, compressed);
+
+    // Calculate compression stats
+    const originalSize = JSON.stringify(response.data).length;
+    const compressedSize = JSON.stringify(compressed).length;
+    const savings = Math.round((1 - compressedSize / originalSize) * 100);
 
     return {
       content: [
         {
           type: 'text',
-          text: `SHACL shapes from '${repoName}':\n${JSON.stringify(response.data, null, 2)}`,
+          text: `Compressed SHACL schema from '${repoName}' (${savings}% smaller):\n${JSON.stringify(compressed, null, 2)}`,
         },
       ],
     };
@@ -2522,13 +2585,45 @@ Output format: Return ONLY the SPARQL query as plain text, nothing else.`;
     return response.data;
   }
 
-  private async getShacl(repoName: string) {
+  private async getShacl(repoName: string, format: 'compressed' | 'full' = 'compressed'): Promise<CompressedShacl | any> {
+    const config = this.config.repositories[repoName];
+    const catalog = config.catalog;
+
+    // For 'full' format, return raw SHACL
+    if (format === 'full') {
+      const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
+      const response = await this.axiosClients[repoName].get(url, {
+        headers: { Accept: 'application/json' },
+      });
+      return response.data;
+    }
+
+    // For 'compressed' format, use compression and caching
+    // Get repository size for cache invalidation
+    const sizeUrl = `${this.getRepositoryUrl(repoName)}/size`;
+    const sizeResponse = await this.axiosClients[repoName].get(sizeUrl);
+    const repoSize = parseInt(sizeResponse.data, 10);
+
+    // Try to read from cache first
+    const cached = readShaclCache(catalog, repoName, repoSize);
+    if (cached) {
+      return cached;
+    }
+
+    // Cache miss - fetch and compress
+    console.error(`Generating compressed SHACL for ${catalog}:${repoName}...`);
     const url = `${this.getRepositoryUrl(repoName)}/data-generator/shacl`;
     const response = await this.axiosClients[repoName].get(url, {
       headers: { Accept: 'application/json' },
     });
 
-    return response.data;
+    // Compress the SHACL
+    const compressed = compressShaclForSparql(response.data);
+
+    // Write to cache for next time
+    writeShaclCache(catalog, repoName, repoSize, compressed);
+
+    return compressed;
   }
 
   async run() {
